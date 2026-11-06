@@ -10,6 +10,7 @@ const stubTextures = {
   },
 };
 const r = await esbuild.build({ entryPoints: ['src/main.js'], bundle: true, minify: process.env.NOMIN ? false : true, format: 'iife', outfile: 'docs/game.js', target: 'es2020', legalComments: 'none', plugins: [stubTextures], logLevel: 'warning', metafile: true });
+await esbuild.build({ entryPoints: ['src/engine/engineWorklet.js'], bundle: true, minify: true, format: 'iife', outfile: 'docs/engine-worklet.js', target: 'es2020', legalComments: 'none', logLevel: 'warning' });
 fs.copyFileSync('src/index.html', 'docs/index.html');
 fs.mkdirSync('docs/assets/ez', { recursive: true });
 for (const f of fs.readdirSync('assets')) if (fs.statSync('assets/' + f).isFile() && !f.endsWith('.hdr')) fs.copyFileSync('assets/' + f, 'docs/assets/' + f);

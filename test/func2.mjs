@@ -5,7 +5,7 @@ async function run(label, viewport, touch) {
   const ctx = await b.newContext({ viewport, hasTouch: touch, isMobile: touch });
   const p = await ctx.newPage(); const errs = [];
   p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
-  await p.goto('http://localhost:8765/dist/index.html?q=low&post=0&manual=1');
+  await p.goto('http://localhost:8767/index.html?q=low&post=0&manual=1');
   await p.waitForFunction(() => window.__game && document.getElementById('loading').classList.contains('hidden'), null, { timeout: 240000 });
   await p.evaluate(() => window.__game.renderOnce());
   const G = (f, a) => p.evaluate(f, a);

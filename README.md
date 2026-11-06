@@ -7,6 +7,7 @@ A realistic off-road 4x4 driving game that runs in the browser, built with three
 - Forest trail with 13 checkpoints: whoops, mud pits, a summit climb, river ford, rock garden, jumps and a bog
 - Custom vehicle physics: raycast suspension with articulating solid axles, friction-circle tyres, per-surface grip, real 4WD / low-range behaviour
 - Detailed procedural off-roader, photo-textured PBR terrain, ez-tree forests with billboard LODs, GPU grass, HDR lighting, ambient occlusion, bloom
+- Physically-modelled V8 engine sound synthesised live (cylinders, valves, header/exhaust/muffler waveguides, dual exhaust), driven by a 5-speed automatic + torque-converter model: starter, idle lope, shifts, kickdown, low-range flare, wheelspin revs, overrun pops, drivetrain whine, cabin vs. chase-cam perspective
 - Day / night with working headlights, mud that builds up on the truck and washes off in water
 - Keyboard, gamepad, and touch (steering wheel + pedals)
 
@@ -23,6 +24,7 @@ Serve `docs/` with any static server (e.g. `python3 -m http.server -d docs`) and
 
 ## Layout
 - `src/` — game source (physics, vehicle model, terrain, vegetation, grass, rocks, post-processing, UI)
+- `src/engine/` — engine sound synthesis (runs in an AudioWorklet, bundled to `docs/engine-worklet.js`); `makeV8.mjs` regenerates the V8 configuration
 - `assets/` — textures (CC0) used by the build
 - `docs/` — built site published by GitHub Pages (`docs/v1/` is the original stylised version)
 - `v1/` — source of the original stylised version

@@ -11,6 +11,7 @@ import { buildGates, buildArrow } from './gates.js';
 import { buildPost } from './post.js';
 import { Particles, Tracks } from './effects.js';
 import { GameAudio } from './audio.js';
+import { Drivetrain } from './drivetrain.js';
 import { Input } from './input.js';
 import { makeBot } from './bot.js';
 import { clamp, lerp } from './noise.js';
@@ -119,6 +120,7 @@ async function boot() {
   const particles = new Particles(scene, 2500);
   const tracks = new Tracks(scene, 6000);
   const audio = new GameAudio();
+  const drive = new Drivetrain();
   const input = new Input();
   input.bindTouch($('hud'));
   if (isTouch) input.bindWheel($('wheel'));
@@ -157,7 +159,8 @@ async function boot() {
   // ---------- modes
   let lastCountNum = null;
   function startGame(type) {
-    audio.init();
+    audio.init().then(() => audio.startEngine());
+    drive.reset();
     Object.assign(S, { type, mode: 'countdown', countdown: type === 'trail' ? 3.2 : 0.01, time: 0, next: 1, lastCp: 0, resets: 0, splits: [], upsideT: 0, stuckT: 0 });
     phys.fourWD = true; phys.lowRange = false; dirt.v = 0;
     placeAtCp(0);
@@ -173,6 +176,7 @@ async function boot() {
   }
   function toMenu() {
     S.mode = 'menu';
+    audio.stopEngine();
     $('hud').classList.add('hidden');
     showOnly('menu'); updateMenuBest();
     placeAtCp(0); bot = makeBot(T, phys); bot.resetTo(0);
@@ -357,7 +361,7 @@ async function boot() {
     $('chip4wd').classList.toggle('on', phys.fourWD); $('chip4wd').textContent = phys.fourWD ? '4WD' : '2WD';
     $('chipLo').classList.toggle('on', phys.lowRange);
     $('btn4wd').classList.toggle('on', phys.fourWD); $('btnLow').classList.toggle('on', phys.lowRange);
-    const g = S.lastInp && S.lastInp.brake > 0 && phys.speed < 0.5 ? 'R' : Math.abs(phys.speed) < 0.3 && !(S.lastInp && S.lastInp.throttle) ? 'N' : 'D';
+    const g = drive.label;
     $('chipGear').textContent = g; $('chipGear').classList.toggle('on', g === 'R');
     if (S.type === 'trail') {
       $('timer').textContent = fmt(S.time);
@@ -464,10 +468,15 @@ async function boot() {
     phys.impacts = 0;
     if (phys.treeHit > 0) { cam.shake = Math.max(cam.shake, phys.treeHit); audio.thud(phys.treeHit); phys.treeHit = 0; }
     if (doRender) renderWorld(dt, inp, physOn); else { syncRealTruck(truck, phys); updateCamera(dt); }
-    const spd = Math.abs(phys.speed), top = phys.lowRange ? 13 : 36;
-    const wheelSpd = Math.max(...phys.wheels.map(w => Math.abs(w.spinVel * phys.R)));
-    const ratio = clamp(Math.max(spd, wheelSpd * 0.8) / top, 0, 1.2), gears = phys.lowRange ? 2 : 5, gp = ratio * gears, gf = gp - Math.floor(Math.min(gp, gears - 0.001));
-    audio.update({ on: S.mode !== 'pause', rpm: 800 + (Math.min(gp, gears) >= 1 ? 0.35 + gf * 0.65 : gf) * 4200 + phys.engineLoad * 300, load: phys.engineLoad, speed: spd, mud: phys.mudAmt, spin: Math.max(1, wheelSpd), water: phys.waterAmt, ground: phys.contacts / 4 });
+    const spd = Math.abs(phys.speed);
+    // driven-wheel surface speed (captures wheelspin in mud / air)
+    let wheelSurf = 0;
+    for (const w of phys.wheels) if (phys.fourWD || !w.front) wheelSurf = Math.max(wheelSurf, Math.abs(w.spinVel * phys.R));
+    const li = S.lastInp || idle;
+    const engineRunning = S.mode !== 'menu';
+    drive.update(dt, { speed: phys.speed, wheelSurf, throttle: S.mode === 'play' ? li.throttle : 0, brake: S.mode === 'play' ? li.brake : 0, low: phys.lowRange, R: phys.R, running: engineRunning });
+    let rough = 0; for (const w of phys.wheels) if (w.contact) rough += (w.rock ? 1 : 0) + Math.max(0, 1 - w.mud) * 0.3; rough /= 4;
+    audio.update({ on: S.mode !== 'pause', rpm: drive.rpm, load: drive.load, throttle: S.mode === 'play' ? li.throttle : 0, whineHz: drive.whineHz, whineGain: drive.whineGain, speed: spd, mud: phys.mudAmt, spin: Math.max(1, wheelSurf), water: phys.waterAmt, ground: phys.contacts / 4, rough, view: S.camMode === 2 ? 'cabin' : S.camMode === 1 ? 'far' : 'chase' });
     if (S.mode !== 'menu') updateHud();
     if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').classList.remove('show'); }
     if (hintT > 0) { hintT -= dt; if (hintT <= 0) $('hint').classList.remove('show'); }
@@ -510,7 +519,7 @@ async function boot() {
 
   // ---------- test hooks
   window.__game = {
-    T, phys, S, input, camera, renderer, scene, veg, rocks,
+    T, phys, S, input, camera, renderer, scene, veg, rocks, audio, drive,
     start: startGame, toMenu, setNight, setLights, recover,
     setInput(o) { input.override = o ? { throttle: 0, brake: 0, steer: 0, handbrake: false, ...o } : null; },
     teleportCp(i) { placeAtCp(i); cam.init = false; },
