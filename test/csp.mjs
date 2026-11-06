@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const p = await b.newPage({ viewport: { width: 740, height: 400 } });
+const errs = [];
+p.on('pageerror', e => errs.push('PAGEERR ' + e.stack.split('\n').slice(0, 5).join(' | ')));
+p.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text().slice(0, 250)); });
+await p.goto('http://localhost:8766/index.html?q=low&manual=1', { waitUntil: 'domcontentloaded' });
+await p.waitForFunction(() => window.__game || /Error/.test(document.getElementById('loadMsg').textContent), null, { timeout: 120000 }).catch(() => {});
+console.log('loadMsg:', await p.evaluate(() => document.getElementById('loadMsg').textContent));
+console.log(errs.slice(0, 10).join('\n'));
+await b.close();

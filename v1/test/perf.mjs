@@ -1,0 +1,15 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
+await page.goto('file:///home/claude/game/dist/index.html');
+await page.waitForFunction(() => window.__game && document.getElementById('loading').classList.contains('hidden'), null, { timeout: 60000 });
+const measure = () => page.evaluate(() => new Promise(res => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 3000) requestAnimationFrame(f); else res((n / 3).toFixed(1)); }; requestAnimationFrame(f); }));
+console.log('fps normal', await measure());
+const cpu = await page.evaluate(() => { const g = window.__game; const t0 = performance.now(); for (let i = 0; i < 5; i++) g.renderer.render(g.scene, g.camera); g.renderer.getContext().finish(); return ((performance.now() - t0) / 5).toFixed(1); });
+console.log('ms per render', cpu);
+await page.evaluate(() => { window.__game.renderer.shadowMap.enabled = false; });
+const cpu2 = await page.evaluate(() => { const g = window.__game; const t0 = performance.now(); for (let i = 0; i < 5; i++) g.renderer.render(g.scene, g.camera); g.renderer.getContext().finish(); return ((performance.now() - t0) / 5).toFixed(1); });
+console.log('ms per render no shadow', cpu2);
+const phys = await page.evaluate(() => { const g = window.__game; const t0 = performance.now(); for (let i = 0; i < 120; i++) g.phys.step(1/120, {throttle:1,brake:0,steer:0}); return ((performance.now() - t0)).toFixed(1); });
+console.log('ms for 1s of physics', phys);
+await browser.close();

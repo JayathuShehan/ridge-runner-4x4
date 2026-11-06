@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="icon" href="data:,">
+<title>Ridge Runner 4x4 — Trail Edition</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --acc: #ffb000; --ok: #3ddc84; --glass: rgba(10, 14, 12, 0.42); --line: rgba(255,255,255,0.16); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f0c; color: #fff; font-family: 'Inter', system-ui, sans-serif; user-select: none; -webkit-user-select: none; touch-action: none; }
+  canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hidden { display: none !important; }
+  .cond { font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif; }
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+  /* minimap */
+  #mapWrap { position: absolute; top: 16px; left: 16px; width: 168px; height: 168px; border-radius: 50%; overflow: hidden; border: 3px solid rgba(20,24,22,0.85); box-shadow: 0 6px 24px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.2); background: #c9cdc7; }
+  #minimap { width: 100%; height: 100%; display: block; }
+  .ibtn { position: absolute; pointer-events: auto; width: 62px; height: 62px; border-radius: 50%; background: rgba(15,18,16,0.55); border: 2px solid rgba(255,255,255,0.75); display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); transition: transform 0.1s, background 0.15s; }
+  .ibtn:active { transform: scale(0.93); }
+  .ibtn svg { width: 58%; height: 58%; }
+  .ibtn.on { background: rgba(255,176,0,0.28); border-color: var(--acc); }
+  .ibtn.on svg .hl { fill: var(--acc); stroke: var(--acc); }
+  .ibtn small { position: absolute; bottom: -18px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-shadow: 0 1px 4px #000; white-space: nowrap; }
+  .sbtn { position: absolute; pointer-events: auto; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.7)); }
+  .sbtn svg { width: 30px; height: 30px; }
+  /* speed */
+  #speedBox { position: absolute; top: 10px; right: 18px; display: flex; align-items: flex-start; gap: 10px; }
+  #speedNum { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 92px; line-height: 0.95; letter-spacing: 2px; color: #fff; -webkit-text-stroke: 3px rgba(0,0,0,0.55); paint-order: stroke fill; font-variant-numeric: tabular-nums; text-shadow: 0 4px 18px rgba(0,0,0,0.35); }
+  #speedUnit { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 20px; text-align: center; margin-top: -4px; letter-spacing: 2px; text-shadow: 0 2px 6px #000; pointer-events: auto; cursor: pointer; }
+  #pauseBtn { pointer-events: auto; cursor: pointer; display: flex; gap: 6px; margin-top: 14px; }
+  #pauseBtn i { display: block; width: 12px; height: 42px; background: var(--ok); border-radius: 2px; box-shadow: 0 0 0 2px rgba(0,0,0,0.5); }
+  #gearBox { position: absolute; top: 128px; right: 22px; display: flex; gap: 6px; }
+  .chip { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 1px; padding: 2px 10px; border-radius: 6px; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.25); opacity: 0.55; }
+  .chip.on { opacity: 1; background: var(--acc); color: #1a1200; border-color: var(--acc); }
+  /* trail info */
+  #trailBox { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); text-align: center; padding: 6px 18px 8px; border-radius: 12px; background: var(--glass); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid var(--line); min-width: 230px; }
+  #timer { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+  #cpline { font-size: 13px; opacity: 0.92; margin-top: 2px; }
+  #cpline b { color: var(--acc); }
+  /* right column */
+  #rightCol .ibtn { right: 26px; }
+  /* touch controls */
+  #wheel { position: absolute; left: 26px; bottom: 22px; width: 230px; height: 230px; pointer-events: auto; touch-action: none; opacity: 0.72; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4)); }
+  #pedals { position: absolute; right: 22px; bottom: 18px; display: flex; align-items: flex-end; gap: 16px; pointer-events: none; }
+  .pedal { pointer-events: auto; touch-action: none; opacity: 0.85; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.45)); transition: transform 0.06s; transform-origin: bottom center; }
+  .pedal.on { transform: perspective(300px) rotateX(18deg) scale(0.97); opacity: 1; }
+  /* desktop key hints */
+  #keys { position: absolute; left: 16px; bottom: 16px; padding: 10px 14px; border-radius: 12px; background: var(--glass); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid var(--line); font-size: 13px; line-height: 1.85; }
+  #keys .row { display: flex; justify-content: space-between; gap: 18px; }
+  kbd { display: inline-block; min-width: 22px; padding: 0 6px; border-radius: 5px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.28); border-bottom-width: 3px; font-family: inherit; font-weight: 600; font-size: 12px; text-align: center; line-height: 18px; }
+  #toast { position: absolute; top: 24%; left: 50%; transform: translateX(-50%); text-align: center; font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 40px; letter-spacing: 1px; text-shadow: 0 3px 16px rgba(0,0,0,0.7); opacity: 0; transition: opacity 0.25s, transform 0.25s; white-space: nowrap; }
+  #toast small { display: block; font-family: 'Inter', sans-serif; font-weight: 500; font-size: 16px; letter-spacing: 0; opacity: 0.9; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(-6px); }
+  #hint { position: absolute; bottom: 26%; left: 50%; transform: translateX(-50%); padding: 9px 16px; border-radius: 12px; background: var(--glass); backdrop-filter: blur(6px); border: 1px solid var(--line); font-size: 16px; font-weight: 500; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+  #hint.show { opacity: 1; }
+  #countdown { position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 150px; text-shadow: 0 6px 30px rgba(0,0,0,0.55); color: #fff; }
+  #countdown.pop { animation: pop 0.6s ease-out; }
+  @keyframes pop { from { transform: translate(-50%, -50%) scale(1.6); opacity: 0; } 30% { opacity: 1; } to { transform: translate(-50%, -50%) scale(1); } }
+  /* overlays */
+  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10; }
+  #menu { background: linear-gradient(90deg, rgba(5,8,6,0.85) 0%, rgba(5,8,6,0.55) 40%, rgba(5,8,6,0) 72%); justify-content: flex-start; padding-left: clamp(20px, 6vw, 96px); }
+  .menuInner { max-width: 470px; width: 100%; }
+  .logo { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: clamp(48px, 7.4vw, 92px); line-height: 0.86; letter-spacing: 1px; text-transform: uppercase; text-shadow: 0 6px 30px rgba(0,0,0,0.5); }
+  .logo span { display: block; color: var(--acc); }
+  .tag { font-size: 16px; opacity: 0.85; margin: 14px 0 24px; line-height: 1.5; }
+  .btn { pointer-events: auto; display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 13px 20px; margin-bottom: 11px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.08); color: #fff; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 24px; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; transition: transform 0.12s, background 0.15s; text-align: left; }
+  .btn small { font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; opacity: 0.75; }
+  .btn:hover { transform: translateX(4px); background: rgba(255,255,255,0.14); }
+  .btn.primary { background: var(--acc); border-color: transparent; color: #1b1300; box-shadow: 0 8px 30px rgba(255,176,0,0.3); }
+  .swatches { display: flex; gap: 10px; margin: 8px 0 20px; align-items: center; flex-wrap: wrap; }
+  .swatches .lbl { font-weight: 600; font-size: 14px; opacity: 0.75; margin-right: 4px; }
+  .sw { width: 30px; height: 30px; border-radius: 50%; border: 3px solid transparent; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.4), inset 0 -6px 10px rgba(0,0,0,0.25), inset 0 4px 8px rgba(255,255,255,0.3); }
+  .sw.sel { border-color: #fff; transform: scale(1.12); }
+  .rowBtns { display: flex; gap: 10px; }
+  .rowBtns .btn { font-size: 16px; padding: 10px 12px; justify-content: center; }
+  .menuFoot { font-size: 12.5px; opacity: 0.6; line-height: 1.6; margin-top: 4px; }
+  .card { padding: 28px 34px; min-width: 330px; max-width: 92vw; text-align: center; border-radius: 16px; background: rgba(10,14,12,0.72); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--line); }
+  .card h2 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 44px; margin: 0 0 6px; letter-spacing: 1px; }
+  .card .big { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 72px; color: var(--acc); line-height: 1; margin: 8px 0; font-variant-numeric: tabular-nums; }
+  .card .sub { font-size: 15px; opacity: 0.85; margin-bottom: 18px; line-height: 1.5; }
+  .medal { font-size: 54px; line-height: 1; }
+  #loading { background: radial-gradient(ellipse at center, #17201a, #070a08); flex-direction: column; gap: 18px; z-index: 20; }
+  #loading .logo { font-size: 64px; text-align: center; }
+  .bar { width: 280px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--acc); transition: width 0.25s; }
+  #loadMsg { opacity: 0.7; font-size: 14px; }
+  #credits { position: absolute; bottom: 10px; right: 14px; font-size: 11px; opacity: 0.45; max-width: 420px; text-align: right; line-height: 1.4; }
+  body.touch #keys { display: none; }
+  body:not(.touch) #touchCtl { display: none; }
+  @media (max-height: 520px) {
+    #speedNum { font-size: 64px; } #mapWrap { width: 120px; height: 120px; } #gearBox { top: 92px; }
+    #wheel { width: 170px; height: 170px; left: 14px; bottom: 10px; }
+    .pedal { transform-origin: bottom center; } #pedals { transform: scale(0.75); transform-origin: bottom right; right: 12px; bottom: 8px; }
+    .ibtn { width: 48px; height: 48px; } .ibtn small { display: none; }
+    .tag { margin: 6px 0 12px; } .btn { padding: 8px 16px; margin-bottom: 7px; font-size: 19px; } .logo { font-size: 46px; } .swatches { margin: 4px 0 10px; } .menuFoot, #credits { display: none; }
+    #trailBox { transform: translateX(-50%) scale(0.8); transform-origin: top center; top: 4px; }
+    #rightCol .ibtn { top: 118px !important; }
+    #btnLights { right: 140px !important; } #btn4wd { right: 84px !important; } #btnLow { right: 28px !important; }
+    .sbtn[data-action="camera"] { top: 18px !important; left: 146px !important; }
+    .sbtn[data-action="reset"] { top: 62px !important; left: 146px !important; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="mapWrap"><canvas id="minimap" width="336" height="336"></canvas></div>
+  <div class="sbtn" data-action="camera" style="top:194px; left:18px;" title="Camera (C)"><svg viewBox="0 0 24 24" fill="#fff"><path d="M3 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm14 3 6-3v10l-6-3z"/></svg></div>
+  <div class="sbtn" data-action="reset" style="top:194px; left:66px;" title="Recover (R)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5" fill="none"/></svg></div>
+
+  <div id="trailBox">
+    <div id="timer">0:00.0</div>
+    <div id="cpline">Checkpoint <b id="cpNum">1/13</b> · <span id="cpName">Warm-up</span> · <span id="cpDist">0 m</span></div>
+  </div>
+
+  <div id="speedBox">
+    <div><div id="speedNum">000</div><div id="speedUnit">KM/H</div></div>
+    <div id="pauseBtn" data-action="pause"><i></i><i></i></div>
+  </div>
+  <div id="gearBox"><div class="chip" id="chipGear">D</div><div class="chip on" id="chip4wd">4WD</div><div class="chip" id="chipLo">LO</div></div>
+
+  <div id="rightCol">
+    <div class="ibtn" data-action="lights" id="btnLights" style="top:178px;" title="Headlights (N)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path class="hl" d="M10 5C5 5 3 8.5 3 12s2 7 7 7c1.5 0 2-1 2-7s-.5-7-2-7z" fill="none"/><path d="M15 7l6-1M15 10.5l6-.5M15 14l6 .5M15 17.5l6 1"/></svg><small>LIGHTS</small></div>
+    <div class="ibtn on" data-action="fourwd" id="btn4wd" style="top:262px;" title="4WD (F)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7"><rect class="hl" x="3" y="2.5" width="4" height="6" rx="1"/><rect class="hl" x="17" y="2.5" width="4" height="6" rx="1"/><rect x="3" y="15.5" width="4" height="6" rx="1" class="hl"/><rect x="17" y="15.5" width="4" height="6" rx="1" class="hl"/><path d="M7 5.5h10M7 18.5h10M12 5.5v13"/><circle cx="12" cy="5.5" r="1.6" fill="#fff"/><circle cx="12" cy="18.5" r="1.6" fill="#fff"/></svg><small>4WD</small></div>
+    <div class="ibtn" data-action="low" id="btnLow" style="top:346px;" title="Low range (L)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M4 18h16"/><path class="hl" d="M6 18l4-9 3 5 2-3 3 7" /></svg><small>LOW</small></div>
+  </div>
+
+  <div id="touchCtl">
+    <svg id="wheel" viewBox="0 0 200 200">
+      <defs><radialGradient id="wg" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="1" stop-color="#e8eee6" stop-opacity="0.35"/></radialGradient></defs>
+      <circle cx="100" cy="100" r="88" fill="none" stroke="url(#wg)" stroke-width="22"/>
+      <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(0,0,0,0.25)" stroke-width="1.5"/>
+      <path d="M28 92 C 60 70, 140 70, 172 92 L 172 112 C 140 102, 120 104, 112 118 L 112 168 L 88 168 L 88 118 C 80 104, 60 102, 28 112 Z" fill="rgba(240,245,238,0.42)" stroke="rgba(0,0,0,0.25)" stroke-width="1.5"/>
+      <circle cx="100" cy="102" r="20" fill="rgba(255,255,255,0.55)" stroke="rgba(0,0,0,0.25)"/>
+      <circle cx="100" cy="102" r="8" fill="rgba(60,70,60,0.5)"/>
+      <rect x="95" y="6" width="10" height="20" rx="3" fill="#ffb000" opacity="0.9"/>
+    </svg>
+    <div id="pedals">
+      <svg class="pedal" data-touch="brake" width="128" height="88" viewBox="0 0 128 88"><rect x="2" y="2" width="124" height="84" rx="12" fill="rgba(232,238,230,0.78)" stroke="rgba(0,0,0,0.35)" stroke-width="2"/><g fill="#5d6560"><circle cx="24" cy="24" r="5.5"/><circle cx="52" cy="24" r="5.5"/><circle cx="80" cy="24" r="5.5"/><circle cx="106" cy="24" r="5.5"/><circle cx="38" cy="44" r="5.5"/><circle cx="66" cy="44" r="5.5"/><circle cx="94" cy="44" r="5.5"/><circle cx="24" cy="64" r="5.5"/><circle cx="52" cy="64" r="5.5"/><circle cx="80" cy="64" r="5.5"/><circle cx="106" cy="64" r="5.5"/></g></svg>
+      <svg class="pedal" data-touch="gas" width="96" height="214" viewBox="0 0 96 214"><path d="M10 2 H86 Q94 2 94 10 V204 Q94 212 86 212 H10 Q2 212 2 204 V22 Z" fill="rgba(232,238,230,0.78)" stroke="rgba(0,0,0,0.35)" stroke-width="2"/><g fill="#5d6560"><circle cx="30" cy="34" r="6"/><circle cx="66" cy="34" r="6"/><circle cx="48" cy="66" r="6"/><circle cx="30" cy="98" r="6"/><circle cx="66" cy="98" r="6"/><circle cx="48" cy="130" r="6"/><circle cx="30" cy="162" r="6"/><circle cx="66" cy="162" r="6"/><circle cx="48" cy="190" r="6"/></g></svg>
+    </div>
+  </div>
+
+  <div id="keys">
+    <div class="row"><span>Drive / steer</span><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></div>
+    <div class="row"><span>Handbrake</span><span><kbd>Space</kbd></span></div>
+    <div class="row"><span>4WD · Low range</span><span><kbd>F</kbd> <kbd>L</kbd></span></div>
+    <div class="row"><span>Recover · Camera</span><span><kbd>R</kbd> <kbd>C</kbd></span></div>
+    <div class="row"><span>Lights/night · Mute · Pause</span><span><kbd>N</kbd> <kbd>M</kbd> <kbd>Esc</kbd></span></div>
+  </div>
+  <div id="toast"></div>
+  <div id="hint"></div>
+  <div id="countdown"></div>
+</div>
+
+<div id="menu" class="overlay hidden">
+  <div class="menuInner">
+    <div class="logo">Ridge Runner<span>4x4 Trail</span></div>
+    <div class="tag">A forest off-road trail. Rock gardens, river fords, deep mud and a mountain summit. Lock in 4WD and take it slow.</div>
+    <button class="btn primary" id="btnTrail">Trail Challenge <small id="menuBest">13 checkpoints · beat the clock</small></button>
+    <button class="btn" id="btnFree">Free Roam <small>explore the valley</small></button>
+    <div class="swatches" id="swatches"><span class="lbl">Paint</span></div>
+    <div class="rowBtns"><button class="btn" id="btnQuality">Graphics: High</button><button class="btn" id="btnFull">Fullscreen</button></div>
+    <div class="menuFoot">WASD / arrows · F 4WD · L low range · R recover · C camera · N night<br>Touch steering wheel and pedals on phones · gamepad supported</div>
+  </div>
+  <div id="credits">Textures &amp; HDRI: Poly Haven (CC0) · Trees: ez-tree by Dan Greenheck (MIT) · Vehicle: original procedural model</div>
+</div>
+
+<div id="pause" class="overlay hidden" style="background:rgba(5,8,6,0.5)">
+  <div class="card">
+    <h2>PAUSED</h2>
+    <div class="sub">Take a breather.</div>
+    <button class="btn primary" id="btnResume">Resume</button>
+    <button class="btn" id="btnRestart">Restart</button>
+    <button class="btn" id="btnNight">Day / Night</button>
+    <button class="btn" id="btnMenu">Main menu</button>
+  </div>
+</div>
+
+<div id="finish" class="overlay hidden" style="background:rgba(5,8,6,0.4)">
+  <div class="card">
+    <div class="medal" id="medal">🏆</div>
+    <h2 id="finTitle">TRAIL COMPLETE</h2>
+    <div class="big" id="finTime">0:00.0</div>
+    <div class="sub" id="finSub"></div>
+    <button class="btn primary" id="btnAgain">Race again</button>
+    <button class="btn" id="btnFreeAfter">Free roam</button>
+    <button class="btn" id="btnMenu2">Main menu</button>
+  </div>
+</div>
+
+<div id="loading" class="overlay">
+  <div class="logo">Ridge Runner<span>4x4 Trail</span></div>
+  <div class="bar"><i id="loadBar"></i></div>
+  <div id="loadMsg">Loading textures…</div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>

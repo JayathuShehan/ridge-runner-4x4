@@ -1,0 +1,24 @@
+{
+  "name": "ridge-runner-4x4",
+  "version": "1.0.0",
+  "description": "Realistic off-road 4x4 driving game for the web (three.js)",
+  "main": "index.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "test:physics": "node test/sim.mjs",
+    "test:browser": "node test/func2.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@dgreenheck/ez-tree": "^1.1.0",
+    "esbuild": "^0.28.2",
+    "n8ao": "^2.0.1",
+    "playwright": "^1.65.0",
+    "postprocessing": "^6.39.6",
+    "three": "^0.187.0"
+  },
+  "type": "module",
+  "private": true
+}

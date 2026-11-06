@@ -1,0 +1,10 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const ctx = await b.newContext({ viewport: { width: 800, height: 380 }, hasTouch: true, isMobile: true });
+const p = await ctx.newPage();
+p.on('pageerror', e => console.log('PAGEERR', e.message));
+await p.goto('http://localhost:8765/dist/index.html?q=low&manual=1');
+await p.waitForFunction(() => window.__game, null, { timeout: 240000 });
+await p.evaluate(() => { const g = window.__game; g.start('trail'); g.S.countdown = 0; g.S.mode = 'play'; g.teleportCp(7); g.S.next = 8; g.botDrive(11); g.renderOnce(0.05); g.renderOnce(0.05); });
+await p.screenshot({ path: '/tmp/v2-phone.png', timeout: 120000 });
+await b.close();
