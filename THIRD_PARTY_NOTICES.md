@@ -7,6 +7,22 @@ This project bundles or uses the following third-party work.
 - Bark and leaf textures, tree generator: [ez-tree](https://github.com/dgreenheck/ez-tree) by Daniel Greenheck — MIT.
 - Water normal map: three.js examples — MIT.
 
+## 3D vehicle models (docs/v4)
+The models were simplified, re-textured as WebP and converted to the game's format by `tools/v4/convert.mjs`. The 3D models remain under their own licences, listed below. These licences are separate from the game code's licence.
+
+| In game | Model | Author / source | Licence |
+|---|---|---|---|
+| Rubicon | Jeep Wrangler Adventure Rubicon | vecarz (sketchfab.com/heynic), via gkjohnson/3d-demo-data | **CC BY-NC-SA 4.0**: non-commercial only, and share-alike |
+| GT300 Racer | Toyota GR Supra GT300 | vecarz (sketchfab.com/heynic), via gkjohnson/3d-demo-data | CC BY 4.0 |
+| MP4/5 F1 | McLaren MP4/5 | vecarz (sketchfab.com/heynic), via gkjohnson/3d-demo-data | CC BY 4.0 |
+| Challenger ’70 | Dodge Challenger 1970 R/T | kryptonmedia (Blend Swap), via gkjohnson/3d-demo-data | CC0 |
+| Cougar 6x6 | Ground Vehicle | Cesium GS (CesiumJS sample data) | Apache 2.0 |
+| Mars Rover | Perseverance | NASA/JPL-Caltech | NASA media usage guidelines |
+| Milk truck | Cesium Milk Truck | Cesium (Khronos glTF Sample Assets) | CC BY 4.0 |
+| Concept | Car Concept | Darmstadt Graphics Group (Khronos glTF Sample Assets) | CC BY 4.0 |
+
+**Trademarks.** Several models show real makes, team names and sponsor liveries. These include Jeep, Dodge, Toyota/GR, McLaren, Honda, Marlboro, Shell and others. These names and logos are trademarks of their owners. They appear only because they are part of the third-party models. They do not imply any endorsement, and some may not be suitable for every use. Before any commercial or public promotional use, remove the Jeep model (because of its non-commercial licence) and strip the branded textures.
+
 ## Engine sound
 The engine sound is synthesised in real time by `src/engine/engineSynth.js`, a JavaScript port (with dual-bank exhaust and
 cycle-to-cycle combustion variation added) of the generator from [enginesound](https://github.com/DasEtwas/enginesound) by DasEtwas,

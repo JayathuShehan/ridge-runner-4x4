@@ -2,7 +2,7 @@
 
 A realistic off-road 4x4 driving game that runs in the browser, built with three.js.
 
-**Play:** https://thinukalehan.github.io/ridge-runner-4x4/  ·  original stylised v1: https://thinukalehan.github.io/ridge-runner-4x4/v1/
+**Play:** https://thinukalehan.github.io/ridge-runner-4x4/  ·  original stylised v1: https://thinukalehan.github.io/ridge-runner-4x4/v1/  ·  **realistic vehicles preview (v4):** https://thinukalehan.github.io/ridge-runner-4x4/v4/
 
 - Forest trail with 13 checkpoints: whoops, mud pits, a summit climb, river ford, rock garden, jumps and a bog
 - Custom vehicle physics: raycast suspension with articulating solid axles, friction-circle tyres, per-surface grip, real 4WD / low-range behaviour
@@ -39,3 +39,15 @@ Serve `docs/` with any static server (e.g. `python3 -m http.server -d docs`) and
 - `test/` — physics and browser tests
 
 See `THIRD_PARTY_NOTICES.md` for asset and library credits.
+
+## Realistic vehicles preview (v4)
+`docs/v4/` is a separate, self-contained build with **15 vehicles**. Six of them are new and converted from real 3D models:
+- Rubicon 4-door off-roader
+- Cougar 6x6 armoured truck
+- Challenger ’70 muscle car
+- GT300 race car
+- MP4/5 F1 car
+- NASA Perseverance rover
+
+It also has a vehicle-select screen with categories. Its build tools and instructions for reproducing it are in [`tools/v4/`](tools/v4/README.md). Model credits are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#3d-vehicle-models-docsv4).
+
