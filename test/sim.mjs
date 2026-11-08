@@ -2,6 +2,7 @@
 import { Terrain, COURSE } from '../src/terrain.js';
 import { TruckPhysics } from '../src/vehicle.js';
 import { makeBot } from '../src/bot.js';
+import { VEHICLES, MODS, resolveSetup } from '../src/garage.js';
 
 const t0 = Date.now();
 const T = new Terrain();
@@ -37,8 +38,9 @@ P.updateAxes();
 check('steer right goes screen-right', P.pos.x < cp0.x - 1, `dx=${(P.pos.x - cp0.x).toFixed(2)}`);
 
 // 5. bot full course, 4WD
-function runBot(fourWD, maxTime = 600, verbose = false) {
+function runBot(fourWD, maxTime = 600, verbose = false, setup = null) {
   const p = new TruckPhysics(T);
+  if (setup) p.applySetup(setup);
   p.fourWD = fourWD;
   const c = T.checkpoint(0);
   p.reset(c.x, c.z, Math.atan2(c.tx, c.tz));
@@ -71,6 +73,44 @@ console.log('4WD bot', JSON.stringify(r4), 'wall ms', Date.now() - ts);
 check('4WD bot completes course', r4.done && r4.resets <= 1 && r4.flips === 0);
 const r2 = runBot(false);
 console.log('2WD bot', JSON.stringify(r2));
+
+// 6. garage: every vehicle at stock, and each mod at its extremes, must settle / drive / stay finite
+const lo = (v) => Object.fromEntries(MODS.map(m => [m.key, m.min])), hi = () => Object.fromEntries(MODS.map(m => [m.key, m.max]));
+const trials = [];
+for (const v of VEHICLES) trials.push([v.id + ' stock', resolveSetup(v.id)]);
+trials.push(['all min', resolveSetup('runner', lo())], ['all max', resolveSetup('runner', hi())]);
+for (const m of MODS) for (const [tag, val] of [['min', m.min], ['max', m.max]]) trials.push([`runner ${m.key} ${tag}`, resolveSetup('runner', { [m.key]: val })]);
+for (const [name, setup] of trials) {
+  const Q = new TruckPhysics(T); Q.applySetup(setup);
+  Q.reset(cp0.x, cp0.z, Math.atan2(cp0.tx, cp0.tz));
+  let mv = 0;
+  for (let i = 0; i < 720; i++) { Q.step(dt, inp()); if (i > 480) mv = Math.max(mv, Q.vel.length()); }
+  const h = Q.pos.y - T.heightAt(Q.pos.x, Q.pos.z);
+  const expect = setup.stats.clearance / 100 + 0.42;      // garage readout vs simulated ride height
+  for (let i = 0; i < 480; i++) Q.step(dt, inp({ throttle: 1 }));
+  const sp = Q.speed * 3.6;
+  check(`garage ${name}`, mv < 0.06 && Math.abs(h - expect) < 0.08 && sp > 10 && !Q.nanReset && Q.up.y > 0.7,
+    `up=${Q.up.y.toFixed(2)} rest=${mv.toFixed(3)} h=${h.toFixed(2)} (readout ${expect.toFixed(2)}) 4s=${sp.toFixed(0)}km/h clr=${setup.stats.clearance}cm crawl=${setup.stats.crawl}% stab=${setup.stats.stability}%`);
+}
+for (const id of ['scout', 'titan']) {
+  const r = runBot(true, 600, false, resolveSetup(id));
+  console.log(id + ' bot', JSON.stringify({ done: r.done, time: +r.time.toFixed(1), flips: r.flips, resets: r.resets }));
+  check(id + ' bot completes course', r.done && r.flips === 0 && r.resets <= 2);
+}
+// 7. render interpolation: blend is between prev and current step, and pop restores the exact real state
+{
+  const Q = new TruckPhysics(T); Q.reset(cp0.x, cp0.z, Math.atan2(cp0.tx, cp0.tz));
+  for (let i = 0; i < 300; i++) Q.step(dt, inp({ throttle: 1 }));
+  const before = Q.pos.clone(), bq = Q.quat.clone(), prev = Q.prevPos.clone();
+  Q.pushInterp(0.5);
+  const mid = Q.pos.clone();
+  const okMid = mid.distanceTo(before.clone().add(prev).multiplyScalar(0.5)) < 1e-9 && Q.prevPos.distanceTo(prev) < 1e-12;
+  Q.popInterp();
+  check('interpolation blends prev/current', okMid && prev.distanceTo(before) > 1e-4, `step=${(prev.distanceTo(before) * 1000).toFixed(1)}mm`);
+  check('interpolation restores real state', Q.pos.equals(before) && Q.quat.equals(bq));
+  Q.reset(cp0.x + 5, cp0.z, 0); Q.pushInterp(0.3);
+  check('no blending across a reset', Q.pos.distanceTo(Q._sp) < 1e-12); Q.popInterp();
+}
 check('NaN guard never triggered', !P.nanReset);
 console.log(fails ? `${fails} FAILED` : 'ALL PASSED');
 process.exit(fails ? 1 : 0);

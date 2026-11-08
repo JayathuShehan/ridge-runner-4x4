@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Terrain, COURSE, CP_LABELS, HALF, WATER } from './terrain.js';
 import { TruckPhysics } from './vehicle.js';
-import { buildRealTruck, syncRealTruck } from './truckModel.js';
+import { buildRealTruck, syncRealTruck, applyTruckSetup } from './truckModel.js';
+import { VEHICLES, MODS, resolveSetup, modsFor, isStock, vehicleById } from './garage.js';
 import { buildEnvironment } from './env.js';
 import { buildTerrain } from './terrainRender.js';
 import { buildVegetation } from './vegetation.js';
@@ -46,7 +47,10 @@ async function boot() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   const dpr = window.devicePixelRatio || 1;
-  renderer.setPixelRatio(quality === 'high' ? Math.min(dpr, 1.5) : quality === 'medium' ? Math.min(dpr, 1.25) : Math.min(dpr, 1));
+  const basePR = quality === 'high' ? Math.min(dpr, 1.5) : quality === 'medium' ? Math.min(dpr, 1.25) : Math.min(dpr, 1);
+  renderer.setPixelRatio(basePR);
+  renderer.info.autoReset = false;   // post-processing renders several passes per frame; we reset once per frame to count them all
+  renderer.shadowMap.autoUpdate = false;  // we trigger shadow updates ourselves (every frame, or every 2nd on Low)
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.15, 3500);
 
@@ -65,7 +69,7 @@ async function boot() {
       .then(b => new Promise((res, rej) => { const img = new Image(); const u = URL.createObjectURL(b); img.onload = () => { res(img); }; img.onerror = rej; img.src = u; }))
       .then(img => { t.image = img; t.needsUpdate = true; manager.itemEnd(url); })
       .catch(e => { console.warn('texture failed', url, e); missing.push(url); manager.itemError(url); manager.itemEnd(url); });
-    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(8, aniso);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(quality === 'high' ? 8 : quality === 'medium' ? 4 : 2, aniso);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     tex[key] = t;
   };
@@ -80,7 +84,7 @@ async function boot() {
   // ---------- environment
   setLoad(36, 'Lighting the sky…'); await tick();
   const envReady = new Promise(res => { window.__envRes = res; });
-  const env = buildEnvironment(renderer, scene, 'assets/env.json', () => window.__envRes());
+  const env = buildEnvironment(renderer, scene, 'assets/env.json', () => window.__envRes(), quality);
   await envReady;
 
   // ---------- world
@@ -117,6 +121,15 @@ async function boot() {
     truck.add(sl, sl.target);
     return sl;
   });
+  // saved garage choice: { veh: id, mods: { [vehicleId]: { travel, tyre, grip, track } } }
+  const garage = (() => { const g = store.get('rr2_garage', null); return { veh: vehicleById(g && g.veh).id, mods: (g && typeof g.mods === 'object' && g.mods) || {} }; })();
+  function applyVehicle() {
+    const sp = resolveSetup(garage.veh, garage.mods[garage.veh]);
+    phys.applySetup(sp); applyTruckSetup(truck, sp);
+    truck.userData.headPos.forEach((p, i) => { const sl = headL[i]; sl.position.set(p.x * sp.bodyScaleX, p.y, p.z); sl.target.position.set(p.x * 1.5 * sp.bodyScaleX, -1.5, 18); });
+    return sp;
+  }
+  applyVehicle();
   const particles = new Particles(scene, 2500);
   const tracks = new Tracks(scene, 6000);
   const audio = new GameAudio();
@@ -134,6 +147,48 @@ async function boot() {
   }
   addEventListener('resize', resize); resize();
 
+  // ---------- dynamic resolution: render scale steps down when frames run long, back up (cautiously) when there's headroom
+  const dyn = { on: store.get('rr2_dynres', true), levels: [1, 0.85, 0.72, 0.6], i: 0, ema: 16.7, slow: 0, fast: 0, warm: 3, cool: 8, lastRaise: -99, big: 0 };
+  function setScale(i) { dyn.i = i; renderer.setPixelRatio(basePR * dyn.levels[i]); resize(); window.__perf.scale = dyn.levels[i]; }
+  function dynUpdate(raw) {
+    if (!dyn.on || document.hidden) { dyn.warm = Math.max(dyn.warm, 1); dyn.big = 0; return; }
+    // a lone very long frame is a hitch (tab switch, shader compile): ignore it. Three in a row is just a slow machine.
+    if (raw > 0.25) { if (++dyn.big < 3) { dyn.warm = Math.max(dyn.warm, 1); return; } raw = 0.25; } else dyn.big = 0;
+    if ((dyn.warm -= raw) > 0) return;
+    dyn.ema += (raw * 1000 - dyn.ema) * 0.06;
+    const now = performance.now() / 1000;
+    dyn.slow = dyn.ema > 21 ? dyn.slow + raw : 0;      // sustained < ~48 fps
+    dyn.fast = dyn.ema < 17.8 ? dyn.fast + raw : 0;    // comfortably holding ~60 fps (or faster)
+    if (dyn.slow > 1.0 && dyn.i < dyn.levels.length - 1) {
+      if (now - dyn.lastRaise < 12) dyn.cool = Math.min(dyn.cool * 2, 90);   // we raised and it immediately hurt: wait longer next time
+      setScale(dyn.i + 1); dyn.slow = dyn.fast = 0; dyn.ema = 16.7; dyn.warm = 1.5;
+    } else if (dyn.fast > dyn.cool && dyn.i > 0) {
+      setScale(dyn.i - 1); dyn.lastRaise = now; dyn.slow = dyn.fast = 0; dyn.warm = 1.5;
+    }
+  }
+  window.__dyn = dyn; window.__dynUpdate = dynUpdate;
+  const chkDyn = $('chkDyn'); chkDyn.checked = dyn.on;
+  chkDyn.onchange = () => { dyn.on = chkDyn.checked; store.set('rr2_dynres', dyn.on); if (!dyn.on && dyn.i) setScale(0); };
+
+  // ---------- performance overlay (F3 or ?perf=1)
+  const perf = { on: params.get('perf') === '1', el: $('perfBox'), js: 0, phys: 0, rnd: 0, worst: 0, t: 0, frames: 0 };
+  const perfTog = () => { perf.on = !perf.on; perf.el.classList.toggle('hidden', !perf.on); };
+  perf.el.classList.toggle('hidden', !perf.on);
+  addEventListener('keydown', (e) => { if (e.code === 'F3') { e.preventDefault(); perfTog(); } });
+  function perfShow(rawDt) {
+    perf.frames++; perf.worst = Math.max(perf.worst, rawDt * 1000); perf.t += rawDt;
+    if (perf.t < 0.25) return;
+    const inf = renderer.info.render, fps = perf.frames / perf.t, sz = renderer.getDrawingBufferSize(new THREE.Vector2());
+    perf.el.textContent = `${fps.toFixed(0)} fps · ${(1000 / fps).toFixed(1)} ms (worst ${perf.worst.toFixed(0)})
+` +
+      `CPU: tick ${perf.js.toFixed(1)} · phys ${perf.phys.toFixed(2)} · render-submit ${perf.rnd.toFixed(1)} ms
+` +
+      `${inf.calls} draws · ${(inf.triangles / 1000).toFixed(0)}k tris · ${renderer.info.memory.geometries} geo · ${renderer.info.memory.textures} tex
+` +
+      `${sz.x}×${sz.y} · scale ${(dyn.levels[dyn.i] * 100).toFixed(0)}%${dyn.on ? ' (dynamic)' : ''} · ${quality}`;
+    perf.t = 0; perf.frames = 0; perf.worst = 0;
+  }
+
   // ---------- state
   const S = { mode: 'menu', type: 'trail', next: 1, time: 0, countdown: 0, lastCp: 0, camMode: 0, night: false, lights: false, resets: 0, splits: [], lastResetT: -10, upsideT: 0, hintsShown: {}, stuckT: 0, unit: store.get('rr2_unit', 'kmh'), best: store.get('rr2_best', null) };
   let bot = makeBot(T, phys);
@@ -143,7 +198,7 @@ async function boot() {
   let toastT = 0, hintT = 0;
   const toast = (html, dur = 1.6) => { const el = $('toast'); el.innerHTML = html; el.classList.add('show'); toastT = dur; };
   const hint = (html, dur = 4) => { const el = $('hint'); el.innerHTML = html; el.classList.add('show'); hintT = dur; };
-  const showOnly = (id) => { for (const o of ['menu', 'pause', 'finish']) $(o).classList.toggle('hidden', o !== id); };
+  const showOnly = (id) => { for (const o of ['menu', 'garage', 'pause', 'finish']) $(o).classList.toggle('hidden', o !== id); };
 
   // paint swatches
   const sw = $('swatches');
@@ -154,7 +209,9 @@ async function boot() {
   });
   const updateMenuBest = () => { $('menuBest').textContent = S.best ? `Best ${fmt(S.best)} · 13 checkpoints` : '13 checkpoints · beat the clock'; };
   updateMenuBest();
-  $('btnQuality').textContent = `Graphics: ${quality[0].toUpperCase() + quality.slice(1)}`;
+  const selQ = $('selQuality'), btnGfx = $('btnApplyGfx');
+  selQ.value = quality;
+  selQ.onchange = () => { btnGfx.disabled = selQ.value === quality; btnGfx.textContent = 'Apply'; };
 
   // ---------- modes
   let lastCountNum = null;
@@ -173,6 +230,8 @@ async function boot() {
     gatesObj.gates.forEach(g => (g.group.visible = type === 'trail'));
     $('keys').classList.remove('hidden'); clearTimeout(S.keysT); S.keysT = setTimeout(() => $('keys').classList.add('hidden'), 15000);
     if (type === 'free') toast('FREE ROAM<small>Explore the valley · Esc for menu</small>', 3);
+    lockMouse();
+    if (canLock && !store.get('rr2_mousehint', false)) { hint('Move the <b>mouse</b> to look around · scroll to zoom · Esc frees the cursor', 5); store.set('rr2_mousehint', true); }
   }
   function toMenu() {
     S.mode = 'menu';
@@ -183,13 +242,15 @@ async function boot() {
     phys.fourWD = true; phys.lowRange = false;
     input.override = null; cam.init = false;
     gatesObj.gates.forEach(g => (g.group.visible = true));
+    unlockMouse();
   }
   function pause(on) {
-    if (on && (S.mode === 'play' || S.mode === 'countdown')) { S.prevMode = S.mode; S.mode = 'pause'; showOnly('pause'); }
-    else if (!on && S.mode === 'pause') { S.mode = S.prevMode; showOnly(null); }
+    if (on && (S.mode === 'play' || S.mode === 'countdown')) { S.prevMode = S.mode; S.mode = 'pause'; showOnly('pause'); unlockMouse(); }
+    else if (!on && S.mode === 'pause') { S.mode = S.prevMode; showOnly(null); lockMouse(); }
   }
   function finish() {
     S.mode = 'finish';
+    unlockMouse();
     audio.chime(true);
     const t = S.time, prev = S.best, isBest = !prev || t < prev;
     if (isBest) { S.best = t; store.set('rr2_best', t); }
@@ -209,10 +270,71 @@ async function boot() {
   $('btnAgain').onclick = () => startGame('trail');
   $('btnFreeAfter').onclick = () => startGame('free');
   $('btnNight').onclick = () => setNight(!S.night);
-  $('btnQuality').onclick = () => { const q = QUALITIES[(QUALITIES.indexOf(quality) + 1) % 3]; store.set('rr2_quality', q); $('btnQuality').textContent = 'Reloading…'; setTimeout(() => location.reload(), 100); };
+  // quality is baked in at load (textures, trees, post-processing), so applying means a reload
+  btnGfx.onclick = () => {
+    if (selQ.value === quality || !QUALITIES.includes(selQ.value)) return;
+    store.set('rr2_quality', selQ.value); btnGfx.disabled = true; selQ.disabled = true; btnGfx.textContent = 'Applying…';
+    const u = new URL(location.href); u.searchParams.delete('q');   // a ?q= override would beat the saved choice
+    setTimeout(() => location.replace(u.toString()), 100);
+  };
   $('btnFull').onclick = () => { try { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}); } catch (e) { /* not allowed */ } };
   $('speedUnit').onclick = () => { S.unit = S.unit === 'kmh' ? 'mph' : 'kmh'; store.set('rr2_unit', S.unit); };
   document.querySelectorAll('.btn').forEach(b => b.addEventListener('pointerdown', () => { audio.init(); audio.click(); }));
+
+  // ---------- garage (vehicle select + tuning)
+  const fmtMod = (m, v) => m.key === 'tyre' ? `${v} cm · ${(v / 2.54).toFixed(1)}″` : `${v} ${m.unit}`;
+  const vehList = $('vehList'), modsEl = $('mods'), statsEl = $('gStats');
+  const vehCards = VEHICLES.map(v => {
+    const b = document.createElement('button'); b.className = 'vcard';
+    b.innerHTML = `<b>${v.name}</b><span>${v.blurb}</span><i>${v.mass} kg</i>`;
+    b.onclick = () => { garage.veh = v.id; saveGarage(); applyVehicle(); refreshGarage(); audio.init(); audio.click(); };
+    vehList.appendChild(b); return b;
+  });
+  const modRows = MODS.map(m => {
+    const row = document.createElement('div'); row.className = 'mod';
+    row.title = m.hint;
+    row.innerHTML = `<div class="modHead"><span>${m.label}</span><span class="val"></span></div><input type="range" min="${m.min}" max="${m.max}" step="${m.step}"><div class="hint">${m.hint}</div>`;
+    const input = row.querySelector('input');
+    input.addEventListener('input', () => {
+      garage.mods[garage.veh] = { ...modsFor(garage.veh, garage.mods[garage.veh]), [m.key]: +input.value };
+      saveGarage(); applyVehicle(); refreshGarage();
+    });
+    modsEl.appendChild(row); return { m, input, val: row.querySelector('.val') };
+  });
+  function saveGarage() { store.set('rr2_garage', { veh: garage.veh, mods: garage.mods }); }
+  function refreshGarage() {
+    const v = vehicleById(garage.veh), cur = modsFor(v.id, garage.mods[v.id]), sp = resolveSetup(v.id, garage.mods[v.id]), st = sp.stats;
+    vehCards.forEach((c, i) => c.classList.toggle('sel', VEHICLES[i].id === v.id));
+    for (const { m, input, val } of modRows) {
+      input.min = m.min; input.max = m.max; input.value = cur[m.key];
+      const d = cur[m.key] - v.stock[m.key];
+      val.innerHTML = fmtMod(m, cur[m.key]) + (d ? `<em>${d > 0 ? '+' : ''}${d} vs stock</em>` : '<em style="opacity:.5">stock</em>');
+    }
+    statsEl.innerHTML = `<div><b>${st.clearance} cm</b><span>Ground clearance</span></div><div><b>${st.crawl}%</b><span>Pulling force</span></div><div><b>${st.stability}%</b><span>Roll stability</span></div>`;
+    $('garageName').textContent = `${v.name} · ${isStock(v.id, garage.mods[v.id]) ? 'stock' : 'tuned'}`;
+  }
+  refreshGarage();
+  // park the truck at the most open spot along the trail, so the turntable camera isn't blocked by trunks
+  let garageCp = -1;
+  function pickGarageCp() {
+    const list = []; let best = 0, bd = -1;
+    for (let i = 0; i < cpCount; i++) {
+      const c = T.checkpoint(i), x = c.x - c.tx * 5, z = c.z - c.tz * 5;
+      T.treesNear(x, z, list);
+      let d = 14; for (const t of list) d = Math.min(d, Math.hypot(t.x - x, t.z - z));
+      if (d > bd + 0.01) { bd = d; best = i; }
+    }
+    return best;
+  }
+  function openGarage() {
+    S.mode = 'garage'; showOnly('garage');
+    if (garageCp < 0) garageCp = pickGarageCp();
+    placeAtCp(garageCp); phys.fourWD = true; phys.lowRange = false; cam.init = false; gH = 1.5;
+    refreshGarage();
+  }
+  $('btnGarage').onclick = openGarage;
+  $('btnGarageDone').onclick = () => toMenu();
+  $('btnModReset').onclick = () => { delete garage.mods[garage.veh]; saveGarage(); applyVehicle(); refreshGarage(); audio.init(); audio.click(); };
 
   // ---------- lights / night
   function setLights(on) {
@@ -235,29 +357,76 @@ async function boot() {
 
   // ---------- camera
   const cam = { init: false, pos: new THREE.Vector3(), look: new THREE.Vector3(), yaw: 0, orbitYaw: 0, orbitPitch: 0, dragT: 0, shake: 0, fov: 55, cine: 0 };
-  let dragging = false, lastX = 0, lastY = 0;
-  canvas.addEventListener('pointerdown', (e) => { if (S.mode === 'play' || S.mode === 'countdown') { dragging = true; lastX = e.clientX; lastY = e.clientY; } });
+  // Desktop: GTA-style mouse look. The pointer is locked to the canvas while driving, so plain mouse
+  // movement orbits the camera; Esc frees the cursor (and pauses). Touch / no pointer lock: drag to orbit.
+  const playing = () => S.mode === 'play' || S.mode === 'countdown';
+  const canLock = 'requestPointerLock' in canvas && !!(window.matchMedia && matchMedia('(any-pointer: fine)').matches);
+  const isLocked = () => document.pointerLockElement === canvas;
+  function lockMouse() { if (!canLock || isLocked()) return; try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) { /* needs a user gesture */ } }
+  function unlockMouse() { if (isLocked()) document.exitPointerLock(); }
+  document.addEventListener('pointerlockchange', () => {
+    // browser released the lock (Esc, alt-tab): pause like GTA; remember when so the Esc keydown doesn't unpause again
+    if (!isLocked() && playing()) { pause(true); S.lockLostT = performance.now(); }
+  });
+  const orbit = (dx, dy, kx, ky) => { cam.orbitYaw -= dx * kx; cam.orbitPitch = clamp(cam.orbitPitch + dy * ky, -0.3, 0.9); cam.dragT = 1.6; };
+  let dragging = false, lastX = 0, lastY = 0, gDrag = false, gH = 1.5;
+  $('garage').addEventListener('pointerdown', (e) => { if (e.target === $('garage')) { gDrag = true; lastX = e.clientX; lastY = e.clientY; $('garage').classList.add('drag'); } });
+  addEventListener('pointerup', () => { gDrag = false; $('garage').classList.remove('drag'); });
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!playing()) return;
+    if (canLock && !isLocked()) { lockMouse(); return; }
+    if (!isLocked()) { dragging = true; lastX = e.clientX; lastY = e.clientY; }
+  });
   addEventListener('pointerup', () => (dragging = false));
-  addEventListener('pointermove', (e) => { if (!dragging) return; cam.orbitYaw -= (e.clientX - lastX) * 0.006; cam.orbitPitch = clamp(cam.orbitPitch + (e.clientY - lastY) * 0.004, -0.25, 0.9); lastX = e.clientX; lastY = e.clientY; cam.dragT = 2.5; });
+  addEventListener('pointermove', (e) => {
+    if (gDrag) { cam.cine -= (e.clientX - lastX) * 0.007; gH = clamp(gH + (e.clientY - lastY) * 0.012, 0.3, 4.5); lastX = e.clientX; lastY = e.clientY; return; }
+    if (isLocked()) { if (playing()) orbit(e.movementX, e.movementY, 0.0028, 0.0022); return; }
+    if (!dragging) return; orbit(e.clientX - lastX, e.clientY - lastY, 0.006, 0.004); lastX = e.clientX; lastY = e.clientY;
+  });
   let zoom = 1;
   canvas.addEventListener('wheel', (e) => { zoom = clamp(zoom * (e.deltaY > 0 ? 1.08 : 0.93), 0.6, 2.2); }, { passive: true });
   const _w = new THREE.Vector3(), _l = new THREE.Vector3();
+  const _trees = [];
   function updateCamera(dt) {
     const p = phys.pos;
     const targetYaw = Math.atan2(phys.fwd.x, phys.fwd.z);
     if (!cam.init) cam.yaw = targetYaw;
     let dy = targetYaw - cam.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI;
     cam.yaw += dy * Math.min(1, dt * 2.6);
-    if (cam.dragT > 0) cam.dragT -= dt; else { cam.orbitYaw *= Math.pow(0.1, dt); cam.orbitPitch *= Math.pow(0.1, dt); }
+    if (cam.dragT > 0) cam.dragT -= dt;
+    else {
+      const rate = clamp((Math.abs(phys.speed) - 0.8) / 6, 0, 1);
+      if (rate > 0) {
+        cam.orbitYaw = Math.atan2(Math.sin(cam.orbitYaw), Math.cos(cam.orbitYaw)); // take the short way back
+        const f = Math.pow(0.12, dt * rate); cam.orbitYaw *= f; cam.orbitPitch *= f;
+      }
+    }
     let desired, look, snap = false;
-    if (S.mode === 'menu') {
+    if (S.mode === 'garage') {
+      // turntable around the parked truck; look target is shifted so the truck sits right of the side panel
+      if (!gDrag) cam.cine += dt * 0.14;
+      const narrow = innerWidth <= 760 && innerHeight > innerWidth;   // portrait phone: panel is a bottom sheet
+      const a = cam.cine, rMax = (9.6 + (phys.R - 0.5) * 8 + (phys.setup.half - 0.98) * 6) * (narrow ? 1.3 : 1);
+      // pull the camera in when a trunk is in the way between it and the truck
+      let r = rMax; const dx = Math.sin(a), dz = Math.cos(a);
+      T.treesNear(p.x, p.z, _trees);
+      for (const t of _trees) { const tx = t.x - p.x, tz = t.z - p.z, along = tx * dx + tz * dz; if (along > 1 && along < rMax + 2 && Math.abs(tx * dz - tz * dx) < 1.9) r = Math.min(r, along - 2.2); }
+      r = Math.max(r, 5.2);
+      const pf = narrow ? 0 : Math.min(480, innerWidth * 0.6) / innerWidth;   // fraction of the screen covered by the side panel
+      const tf = Math.tan(camera.fov * Math.PI / 360) * r;
+      const off = pf * 0.92 * tf * camera.aspect, offV = narrow ? tf * 0.5 : 0;
+      desired = _w.set(p.x + Math.sin(a) * r, p.y + gH, p.z + Math.cos(a) * r);
+      look = _l.set(p.x - Math.cos(a) * off, p.y - 0.1 - offV, p.z + Math.sin(a) * off);
+    } else if (S.mode === 'menu') {
       cam.cine += dt * 0.09;
       const a = cam.cine, r = 7.5 + Math.sin(a * 0.6) * 1.5;
       desired = _w.set(p.x + Math.sin(a) * r, p.y + 1.2 + Math.sin(a * 1.3) * 0.6, p.z + Math.cos(a) * r);
       look = _l.set(p.x, p.y + 0.5, p.z);
     } else if (S.camMode === 2) {
       desired = _w.copy(phys.up).multiplyScalar(0.98).addScaledVector(phys.right, -0.38).addScaledVector(phys.fwd, -0.45).add(p);
-      look = _l.copy(phys.fwd).multiplyScalar(20).addScaledVector(phys.up, 0.6).add(p);
+      const hy = clamp(Math.atan2(Math.sin(cam.orbitYaw), Math.cos(cam.orbitYaw)), -2.2, 2.2);
+      _l.copy(phys.fwd).applyAxisAngle(phys.up, hy).multiplyScalar(20).addScaledVector(phys.up, 0.6 - cam.orbitPitch * 14);
+      look = _l.add(p);
       snap = true;
     } else {
       const far = S.camMode === 1;
@@ -304,7 +473,7 @@ async function boot() {
     mctx.save(); mctx.fillStyle = '#c9cdc7'; mctx.fillRect(0, 0, W, W);
     mctx.translate(cx, cx); mctx.rotate(-Math.PI / 2 - Math.atan2(phys.fwd.z, phys.fwd.x)); mctx.scale(sc, sc); mctx.translate(-phys.pos.x, -phys.pos.z);
     mctx.drawImage(mapImg, -HALF, -HALF, HALF * 2, HALF * 2);
-    if (S.type === 'trail' && S.mode !== 'menu') for (let i = 0; i < cpCount; i++) {
+    if (S.type === 'trail' && S.mode !== 'menu' && S.mode !== 'garage') for (let i = 0; i < cpCount; i++) {
       const c = gatesObj.gates[i].cp, isNext = i === S.next % cpCount, done = i > 0 && i < S.next;
       mctx.beginPath(); mctx.arc(c.x, c.z, isNext ? 6 : 3.5, 0, Math.PI * 2);
       mctx.fillStyle = isNext ? '#ffb000' : done ? '#3ddc84' : i === 0 ? '#111' : '#e55'; mctx.fill();
@@ -374,7 +543,7 @@ async function boot() {
     if (isTouch) document.querySelectorAll('.pedal').forEach(p => p.classList.toggle('on', !!input.touch[p.dataset.touch]));
   }
   function updateGates(t) {
-    const ni = S.next % cpCount, show = S.type === 'trail' && S.mode !== 'menu' && S.mode !== 'finish';
+    const ni = S.next % cpCount, show = S.type === 'trail' && S.mode !== 'menu' && S.mode !== 'garage' && S.mode !== 'finish';
     const g = gatesObj.gates[ni];
     gatesObj.beam.visible = gatesObj.ring.visible = show;
     if (show) {
@@ -382,7 +551,7 @@ async function boot() {
       gatesObj.beamMat.opacity = 0.08 + Math.sin(t * 3) * 0.03;
       const s = 1 + Math.sin(t * 4) * 0.05; gatesObj.ring.scale.set(s, 1, s);
     }
-    gatesObj.gates.forEach((gt, i) => { const passed = S.type === 'trail' && i > 0 && i < S.next && S.mode !== 'menu'; gt.bannerMat.emissiveIntensity = (show && i === ni) ? 0.35 + Math.sin(t * 5) * 0.15 : 0.03; gt.bannerMat.color.set(passed ? 0x88aa88 : 0xffffff); });
+    gatesObj.gates.forEach((gt, i) => { const passed = S.type === 'trail' && i > 0 && i < S.next && S.mode !== 'menu' && S.mode !== 'garage'; gt.bannerMat.emissiveIntensity = (show && i === ni) ? 0.35 + Math.sin(t * 5) * 0.15 : 0.03; gt.bannerMat.color.set(passed ? 0x88aa88 : 0xffffff); });
   }
 
   // ---------- gameplay
@@ -414,11 +583,11 @@ async function boot() {
     S.resets++;
     const now = performance.now() / 1000;
     if (toCp || now - S.lastResetT < 2.5) { placeAtCp(S.type === 'trail' ? S.lastCp : 0); toast('RECOVERED<small>Back to last checkpoint</small>', 1.4); }
-    else { const yaw = Math.abs(phys.fwd.y) < 0.9 ? Math.atan2(phys.fwd.x, phys.fwd.z) : cam.yaw; phys.reset(phys.pos.x, phys.pos.z, yaw); phys.pos.y += 0.6; toast('RECOVERED<small>Recover twice quickly for last checkpoint</small>', 1.6); }
+    else { const yaw = Math.abs(phys.fwd.y) < 0.9 ? Math.atan2(phys.fwd.x, phys.fwd.z) : cam.yaw; phys.reset(phys.pos.x, phys.pos.z, yaw); phys.pos.y += 0.6; phys.prevPos.y += 0.6; toast('RECOVERED<small>Recover twice quickly for last checkpoint</small>', 1.6); }
     S.lastResetT = now; tracks.clear();
   }
   function handleActions() {
-    if (input.take('pause')) { if (S.mode === 'pause') pause(false); else if (S.mode === 'play' || S.mode === 'countdown') pause(true); else if (S.mode === 'finish') toMenu(); }
+    if (input.take('pause')) { if (S.mode === 'pause') { if (performance.now() - (S.lockLostT || -1e9) > 400) pause(false); } else if (S.mode === 'play' || S.mode === 'countdown') pause(true); else if (S.mode === 'finish' || S.mode === 'garage') toMenu(); }
     if (input.take('mute')) { audio.init(); audio.setMuted(!audio.muted); toast(audio.muted ? 'SOUND OFF' : 'SOUND ON', 1); }
     if (input.take('night')) { setNight(!S.night); toast(S.night ? 'NIGHT<small>Headlights on</small>' : 'DAY', 1.4); }
     if (input.take('help')) $('keys').classList.toggle('hidden');
@@ -437,12 +606,16 @@ async function boot() {
   let frameErrs = 0;
   function frame() {
     requestAnimationFrame(frame);
-    const now = performance.now(); const dt = Math.min((now - lastNow) / 1000, 0.05); lastNow = now;
+    const now = performance.now(); const rawDt = (now - lastNow) / 1000, dt = Math.min(rawDt, 0.05); lastNow = now;
+    dynUpdate(rawDt);
+    if (perf.on) perfShow(rawDt);
+    const t0 = performance.now();
     try { tickOnce(dt, true); } catch (e) {
       frameErrs++; console.error(e);
       if (frameErrs === 1) showError(e, 'while running');
       if (post && frameErrs === 3) { post = null; renderer.toneMapping = THREE.AgXToneMapping; }  // fall back to plain rendering
     }
+    perf.js += (performance.now() - t0 - perf.js) * 0.1;
   }
   function tickOnce(dt, doRender) {
     simT += dt;
@@ -460,29 +633,40 @@ async function boot() {
     else input.read(dt);
     S.lastInp = inp;
     const physOn = S.mode !== 'pause';
+    const tp = performance.now();
     if (physOn) { acc += dt; let n = 0; while (acc >= STEP && n < 8) { phys.step(STEP, inp); acc -= STEP; n++; } if (n === 8) acc = 0; }
+    perf.phys += (performance.now() - tp - perf.phys) * 0.1;
     if (S.mode === 'menu') { phys.updateAxes(); if (phys.up.y < 0.3 || Math.abs(phys.speed) < 0.3) { S.menuStuck = (S.menuStuck || 0) + dt; if (S.menuStuck > 5) { S.menuStuck = 0; const ci = Math.floor(Math.random() * cpCount); placeAtCp(ci); bot.resetTo(ci); cam.init = false; } } else S.menuStuck = 0; }
     gameplay(physOn ? dt : 0);
     if (phys.landing > 0) { cam.shake = Math.max(cam.shake, phys.landing); audio.thud(phys.landing); phys.landing = 0; }
     if (phys.impacts > 0.15) { cam.shake = Math.max(cam.shake, phys.impacts * 0.8); audio.thud(phys.impacts * 0.8); }
     phys.impacts = 0;
     if (phys.treeHit > 0) { cam.shake = Math.max(cam.shake, phys.treeHit); audio.thud(phys.treeHit); phys.treeHit = 0; }
-    if (doRender) renderWorld(dt, inp, physOn); else { syncRealTruck(truck, phys); updateCamera(dt); }
+    if (doRender) renderWorld(dt, inp, physOn, physOn ? acc / STEP : 1); else { syncRealTruck(truck, phys); updateCamera(dt); }
     const spd = Math.abs(phys.speed);
     // driven-wheel surface speed (captures wheelspin in mud / air)
     let wheelSurf = 0;
     for (const w of phys.wheels) if (phys.fourWD || !w.front) wheelSurf = Math.max(wheelSurf, Math.abs(w.spinVel * phys.R));
     const li = S.lastInp || idle;
-    const engineRunning = S.mode !== 'menu';
+    const engineRunning = S.mode !== 'menu' && S.mode !== 'garage';
     drive.update(dt, { speed: phys.speed, wheelSurf, throttle: S.mode === 'play' ? li.throttle : 0, brake: S.mode === 'play' ? li.brake : 0, low: phys.lowRange, R: phys.R, running: engineRunning });
     let rough = 0; for (const w of phys.wheels) if (w.contact) rough += (w.rock ? 1 : 0) + Math.max(0, 1 - w.mud) * 0.3; rough /= 4;
     audio.update({ on: S.mode !== 'pause', rpm: drive.rpm, load: drive.load, throttle: S.mode === 'play' ? li.throttle : 0, whineHz: drive.whineHz, whineGain: drive.whineGain, speed: spd, mud: phys.mudAmt, spin: Math.max(1, wheelSurf), water: phys.waterAmt, ground: phys.contacts / 4, rough, view: S.camMode === 2 ? 'cabin' : S.camMode === 1 ? 'far' : 'chase' });
-    if (S.mode !== 'menu') updateHud();
+    if (S.mode !== 'menu' && S.mode !== 'garage') updateHud();
     if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').classList.remove('show'); }
     if (hintT > 0) { hintT -= dt; if (hintT <= 0) $('hint').classList.remove('show'); }
     fpsAcc += dt; fpsN++; if (fpsAcc > 1) { window.__perf.fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
   }
-  function renderWorld(dt, inp, physOn) {
+  let shadowFrame = 0;
+  function renderWorld(dt, inp, physOn, alpha = 1) {
+    const tr = performance.now();
+    renderer.info.reset();
+    // draw the truck/camera at the blended state between the last two physics steps (smooth on any refresh rate)
+    const interp = alpha < 1; if (interp) phys.pushInterp(alpha);
+    try { renderWorldInner(dt, inp, physOn); } finally { if (interp) phys.popInterp(); }
+    perf.rnd += (performance.now() - tr - perf.rnd) * 0.1;
+  }
+  function renderWorldInner(dt, inp, physOn) {
     syncRealTruck(truck, phys);
     // brake / reverse lights
     const m = truck.userData.mats;
@@ -493,7 +677,8 @@ async function boot() {
     tracks.update(dt);
     water.update(simT);
     updateGates(simT);
-    env.follow(phys.pos);
+    // shadow map: re-render (and move the light) every frame; on Low only every 2nd frame
+    if (quality !== 'low' || (shadowFrame++ & 1) === 0) { env.follow(phys.pos); renderer.shadowMap.needsUpdate = true; }
     updateCamera(dt);
     terrain.update(camera.position, 700, quality === 'low' ? 80 : 115);
     veg.refresh(camera.position);
@@ -526,7 +711,7 @@ async function boot() {
     advance(sec, o) { const inp = o ? { ...idle, ...o } : idle; const n = Math.round(sec / STEP); for (let i = 0; i < n; i++) { phys.step(STEP, inp); if (i % 4 === 3) { const d = STEP * 4; S.lastInp = inp; gameplay(d); emitEffects(d); particles.update(d, T); updateDirt(d); updateCamera(d); } } syncRealTruck(truck, phys); },
     botDrive(sec) { const b = makeBot(T, phys); b.resetTo(Math.max(0, (S.next - 1) % cpCount)); const n = Math.round(sec / STEP); for (let i = 0; i < n; i++) { const inp = b.drive(STEP); phys.step(STEP, inp); if (i % 4 === 3) { const d = STEP * 4; S.lastInp = inp; gameplay(d); emitEffects(d); particles.update(d, T); updateDirt(d); updateCamera(d); } } syncRealTruck(truck, phys); },
     tick(dt = 1 / 30, n = 1, render = false) { for (let i = 0; i < n; i++) tickOnce(dt, render); },
-    renderOnce(dt = 0.016) { const t0 = performance.now(); handleActions(); renderWorld(dt, S.lastInp || idle, false); if (S.mode !== 'menu') updateHud(); if (renderer.getContext().finish) renderer.getContext().finish(); return performance.now() - t0; },
+    renderOnce(dt = 0.016) { const t0 = performance.now(); handleActions(); renderWorld(dt, S.lastInp || idle, false); if (S.mode !== 'menu' && S.mode !== 'garage') updateHud(); if (renderer.getContext().finish) renderer.getContext().finish(); return performance.now() - t0; },
     setCam(m) { S.camMode = m; cam.init = false; },
     setDirt(v) { dirt.v = v; truck.userData.dirt.value = v; },
     info() { return { mode: S.mode, next: S.next, time: S.time, speed: phys.speed, pos: phys.pos.toArray(), up: phys.up.toArray(), fourWD: phys.fourWD, low: phys.lowRange, contacts: phys.contacts, fps: window.__perf.fps, calls: renderer.info.render.calls, tris: renderer.info.render.triangles, quality }; },
