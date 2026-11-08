@@ -23,6 +23,9 @@ Converted from glTF (simplified, wheels split out, textures re-encoded as WebP) 
 
 Vehicle and brand names belong to their owners; the in-game names are descriptive and imply no endorsement. Garage thumbnails (`assets/thumbs/`) are in-game renders.
 
+**Trademarks.** Several models show real makes, team names and sponsor liveries. These include Jeep, Dodge, Toyota/GR, McLaren, Honda, Marlboro, Shell and others. These names and logos are trademarks of their owners. They appear only because they are part of the third-party models (the in-game names are descriptive). They do not imply any endorsement, and some may not be suitable for every use. Before any commercial or public promotional use, remove the Jeep model (because of its non-commercial licence) and strip the branded textures.
+
+
 ## Engine sound
 The engine sound is synthesised in real time by `src/engine/engineSynth.js`, a JavaScript port (with dual-bank exhaust and
 cycle-to-cycle combustion variation added) of the generator from [enginesound](https://github.com/DasEtwas/enginesound) by DasEtwas,
