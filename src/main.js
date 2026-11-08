@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Terrain, COURSE, CP_LABELS, HALF, WATER } from './terrain.js';
 import { TruckPhysics } from './vehicle.js';
-import { buildRealTruck, syncRealTruck } from './truckModel.js';
+import { buildRealTruck, syncRealTruck, applyTruckSetup } from './truckModel.js';
+import { VEHICLES, MODS, resolveSetup, modsFor, isStock, vehicleById } from './garage.js';
 import { buildEnvironment } from './env.js';
 import { buildTerrain } from './terrainRender.js';
 import { buildVegetation } from './vegetation.js';
@@ -117,6 +118,15 @@ async function boot() {
     truck.add(sl, sl.target);
     return sl;
   });
+  // saved garage choice: { veh: id, mods: { [vehicleId]: { travel, tyre, grip, track } } }
+  const garage = (() => { const g = store.get('rr2_garage', null); return { veh: vehicleById(g && g.veh).id, mods: (g && typeof g.mods === 'object' && g.mods) || {} }; })();
+  function applyVehicle() {
+    const sp = resolveSetup(garage.veh, garage.mods[garage.veh]);
+    phys.applySetup(sp); applyTruckSetup(truck, sp);
+    truck.userData.headPos.forEach((p, i) => { const sl = headL[i]; sl.position.set(p.x * sp.bodyScaleX, p.y, p.z); sl.target.position.set(p.x * 1.5 * sp.bodyScaleX, -1.5, 18); });
+    return sp;
+  }
+  applyVehicle();
   const particles = new Particles(scene, 2500);
   const tracks = new Tracks(scene, 6000);
   const audio = new GameAudio();
@@ -143,7 +153,7 @@ async function boot() {
   let toastT = 0, hintT = 0;
   const toast = (html, dur = 1.6) => { const el = $('toast'); el.innerHTML = html; el.classList.add('show'); toastT = dur; };
   const hint = (html, dur = 4) => { const el = $('hint'); el.innerHTML = html; el.classList.add('show'); hintT = dur; };
-  const showOnly = (id) => { for (const o of ['menu', 'pause', 'finish']) $(o).classList.toggle('hidden', o !== id); };
+  const showOnly = (id) => { for (const o of ['menu', 'garage', 'pause', 'finish']) $(o).classList.toggle('hidden', o !== id); };
 
   // paint swatches
   const sw = $('swatches');
@@ -218,6 +228,61 @@ async function boot() {
   $('speedUnit').onclick = () => { S.unit = S.unit === 'kmh' ? 'mph' : 'kmh'; store.set('rr2_unit', S.unit); };
   document.querySelectorAll('.btn').forEach(b => b.addEventListener('pointerdown', () => { audio.init(); audio.click(); }));
 
+  // ---------- garage (vehicle select + tuning)
+  const fmtMod = (m, v) => m.key === 'tyre' ? `${v} cm · ${(v / 2.54).toFixed(1)}″` : `${v} ${m.unit}`;
+  const vehList = $('vehList'), modsEl = $('mods'), statsEl = $('gStats');
+  const vehCards = VEHICLES.map(v => {
+    const b = document.createElement('button'); b.className = 'vcard';
+    b.innerHTML = `<b>${v.name}</b><span>${v.blurb}</span><i>${v.mass} kg</i>`;
+    b.onclick = () => { garage.veh = v.id; saveGarage(); applyVehicle(); refreshGarage(); audio.init(); audio.click(); };
+    vehList.appendChild(b); return b;
+  });
+  const modRows = MODS.map(m => {
+    const row = document.createElement('div'); row.className = 'mod';
+    row.title = m.hint;
+    row.innerHTML = `<div class="modHead"><span>${m.label}</span><span class="val"></span></div><input type="range" min="${m.min}" max="${m.max}" step="${m.step}"><div class="hint">${m.hint}</div>`;
+    const input = row.querySelector('input');
+    input.addEventListener('input', () => {
+      garage.mods[garage.veh] = { ...modsFor(garage.veh, garage.mods[garage.veh]), [m.key]: +input.value };
+      saveGarage(); applyVehicle(); refreshGarage();
+    });
+    modsEl.appendChild(row); return { m, input, val: row.querySelector('.val') };
+  });
+  function saveGarage() { store.set('rr2_garage', { veh: garage.veh, mods: garage.mods }); }
+  function refreshGarage() {
+    const v = vehicleById(garage.veh), cur = modsFor(v.id, garage.mods[v.id]), sp = resolveSetup(v.id, garage.mods[v.id]), st = sp.stats;
+    vehCards.forEach((c, i) => c.classList.toggle('sel', VEHICLES[i].id === v.id));
+    for (const { m, input, val } of modRows) {
+      input.min = m.min; input.max = m.max; input.value = cur[m.key];
+      const d = cur[m.key] - v.stock[m.key];
+      val.innerHTML = fmtMod(m, cur[m.key]) + (d ? `<em>${d > 0 ? '+' : ''}${d} vs stock</em>` : '<em style="opacity:.5">stock</em>');
+    }
+    statsEl.innerHTML = `<div><b>${st.clearance} cm</b><span>Ground clearance</span></div><div><b>${st.crawl}%</b><span>Pulling force</span></div><div><b>${st.stability}%</b><span>Roll stability</span></div>`;
+    $('garageName').textContent = `${v.name} · ${isStock(v.id, garage.mods[v.id]) ? 'stock' : 'tuned'}`;
+  }
+  refreshGarage();
+  // park the truck at the most open spot along the trail, so the turntable camera isn't blocked by trunks
+  let garageCp = -1;
+  function pickGarageCp() {
+    const list = []; let best = 0, bd = -1;
+    for (let i = 0; i < cpCount; i++) {
+      const c = T.checkpoint(i), x = c.x - c.tx * 5, z = c.z - c.tz * 5;
+      T.treesNear(x, z, list);
+      let d = 14; for (const t of list) d = Math.min(d, Math.hypot(t.x - x, t.z - z));
+      if (d > bd + 0.01) { bd = d; best = i; }
+    }
+    return best;
+  }
+  function openGarage() {
+    S.mode = 'garage'; showOnly('garage');
+    if (garageCp < 0) garageCp = pickGarageCp();
+    placeAtCp(garageCp); phys.fourWD = true; phys.lowRange = false; cam.init = false; gH = 1.5;
+    refreshGarage();
+  }
+  $('btnGarage').onclick = openGarage;
+  $('btnGarageDone').onclick = () => toMenu();
+  $('btnModReset').onclick = () => { delete garage.mods[garage.veh]; saveGarage(); applyVehicle(); refreshGarage(); audio.init(); audio.click(); };
+
   // ---------- lights / night
   function setLights(on) {
     S.lights = on;
@@ -251,7 +316,9 @@ async function boot() {
     if (!isLocked() && playing()) { pause(true); S.lockLostT = performance.now(); }
   });
   const orbit = (dx, dy, kx, ky) => { cam.orbitYaw -= dx * kx; cam.orbitPitch = clamp(cam.orbitPitch + dy * ky, -0.3, 0.9); cam.dragT = 1.6; };
-  let dragging = false, lastX = 0, lastY = 0;
+  let dragging = false, lastX = 0, lastY = 0, gDrag = false, gH = 1.5;
+  $('garage').addEventListener('pointerdown', (e) => { if (e.target === $('garage')) { gDrag = true; lastX = e.clientX; lastY = e.clientY; $('garage').classList.add('drag'); } });
+  addEventListener('pointerup', () => { gDrag = false; $('garage').classList.remove('drag'); });
   canvas.addEventListener('pointerdown', (e) => {
     if (!playing()) return;
     if (canLock && !isLocked()) { lockMouse(); return; }
@@ -259,12 +326,14 @@ async function boot() {
   });
   addEventListener('pointerup', () => (dragging = false));
   addEventListener('pointermove', (e) => {
+    if (gDrag) { cam.cine -= (e.clientX - lastX) * 0.007; gH = clamp(gH + (e.clientY - lastY) * 0.012, 0.3, 4.5); lastX = e.clientX; lastY = e.clientY; return; }
     if (isLocked()) { if (playing()) orbit(e.movementX, e.movementY, 0.0028, 0.0022); return; }
     if (!dragging) return; orbit(e.clientX - lastX, e.clientY - lastY, 0.006, 0.004); lastX = e.clientX; lastY = e.clientY;
   });
   let zoom = 1;
   canvas.addEventListener('wheel', (e) => { zoom = clamp(zoom * (e.deltaY > 0 ? 1.08 : 0.93), 0.6, 2.2); }, { passive: true });
   const _w = new THREE.Vector3(), _l = new THREE.Vector3();
+  const _trees = [];
   function updateCamera(dt) {
     const p = phys.pos;
     const targetYaw = Math.atan2(phys.fwd.x, phys.fwd.z);
@@ -280,7 +349,22 @@ async function boot() {
       }
     }
     let desired, look, snap = false;
-    if (S.mode === 'menu') {
+    if (S.mode === 'garage') {
+      // turntable around the parked truck; look target is shifted so the truck sits right of the side panel
+      if (!gDrag) cam.cine += dt * 0.14;
+      const narrow = innerWidth <= 760 && innerHeight > innerWidth;   // portrait phone: panel is a bottom sheet
+      const a = cam.cine, rMax = (9.6 + (phys.R - 0.5) * 8 + (phys.setup.half - 0.98) * 6) * (narrow ? 1.3 : 1);
+      // pull the camera in when a trunk is in the way between it and the truck
+      let r = rMax; const dx = Math.sin(a), dz = Math.cos(a);
+      T.treesNear(p.x, p.z, _trees);
+      for (const t of _trees) { const tx = t.x - p.x, tz = t.z - p.z, along = tx * dx + tz * dz; if (along > 1 && along < rMax + 2 && Math.abs(tx * dz - tz * dx) < 1.9) r = Math.min(r, along - 2.2); }
+      r = Math.max(r, 5.2);
+      const pf = narrow ? 0 : Math.min(480, innerWidth * 0.6) / innerWidth;   // fraction of the screen covered by the side panel
+      const tf = Math.tan(camera.fov * Math.PI / 360) * r;
+      const off = pf * 0.92 * tf * camera.aspect, offV = narrow ? tf * 0.5 : 0;
+      desired = _w.set(p.x + Math.sin(a) * r, p.y + gH, p.z + Math.cos(a) * r);
+      look = _l.set(p.x - Math.cos(a) * off, p.y - 0.1 - offV, p.z + Math.sin(a) * off);
+    } else if (S.mode === 'menu') {
       cam.cine += dt * 0.09;
       const a = cam.cine, r = 7.5 + Math.sin(a * 0.6) * 1.5;
       desired = _w.set(p.x + Math.sin(a) * r, p.y + 1.2 + Math.sin(a * 1.3) * 0.6, p.z + Math.cos(a) * r);
@@ -336,7 +420,7 @@ async function boot() {
     mctx.save(); mctx.fillStyle = '#c9cdc7'; mctx.fillRect(0, 0, W, W);
     mctx.translate(cx, cx); mctx.rotate(-Math.PI / 2 - Math.atan2(phys.fwd.z, phys.fwd.x)); mctx.scale(sc, sc); mctx.translate(-phys.pos.x, -phys.pos.z);
     mctx.drawImage(mapImg, -HALF, -HALF, HALF * 2, HALF * 2);
-    if (S.type === 'trail' && S.mode !== 'menu') for (let i = 0; i < cpCount; i++) {
+    if (S.type === 'trail' && S.mode !== 'menu' && S.mode !== 'garage') for (let i = 0; i < cpCount; i++) {
       const c = gatesObj.gates[i].cp, isNext = i === S.next % cpCount, done = i > 0 && i < S.next;
       mctx.beginPath(); mctx.arc(c.x, c.z, isNext ? 6 : 3.5, 0, Math.PI * 2);
       mctx.fillStyle = isNext ? '#ffb000' : done ? '#3ddc84' : i === 0 ? '#111' : '#e55'; mctx.fill();
@@ -406,7 +490,7 @@ async function boot() {
     if (isTouch) document.querySelectorAll('.pedal').forEach(p => p.classList.toggle('on', !!input.touch[p.dataset.touch]));
   }
   function updateGates(t) {
-    const ni = S.next % cpCount, show = S.type === 'trail' && S.mode !== 'menu' && S.mode !== 'finish';
+    const ni = S.next % cpCount, show = S.type === 'trail' && S.mode !== 'menu' && S.mode !== 'garage' && S.mode !== 'finish';
     const g = gatesObj.gates[ni];
     gatesObj.beam.visible = gatesObj.ring.visible = show;
     if (show) {
@@ -414,7 +498,7 @@ async function boot() {
       gatesObj.beamMat.opacity = 0.08 + Math.sin(t * 3) * 0.03;
       const s = 1 + Math.sin(t * 4) * 0.05; gatesObj.ring.scale.set(s, 1, s);
     }
-    gatesObj.gates.forEach((gt, i) => { const passed = S.type === 'trail' && i > 0 && i < S.next && S.mode !== 'menu'; gt.bannerMat.emissiveIntensity = (show && i === ni) ? 0.35 + Math.sin(t * 5) * 0.15 : 0.03; gt.bannerMat.color.set(passed ? 0x88aa88 : 0xffffff); });
+    gatesObj.gates.forEach((gt, i) => { const passed = S.type === 'trail' && i > 0 && i < S.next && S.mode !== 'menu' && S.mode !== 'garage'; gt.bannerMat.emissiveIntensity = (show && i === ni) ? 0.35 + Math.sin(t * 5) * 0.15 : 0.03; gt.bannerMat.color.set(passed ? 0x88aa88 : 0xffffff); });
   }
 
   // ---------- gameplay
@@ -450,7 +534,7 @@ async function boot() {
     S.lastResetT = now; tracks.clear();
   }
   function handleActions() {
-    if (input.take('pause')) { if (S.mode === 'pause') { if (performance.now() - (S.lockLostT || -1e9) > 400) pause(false); } else if (S.mode === 'play' || S.mode === 'countdown') pause(true); else if (S.mode === 'finish') toMenu(); }
+    if (input.take('pause')) { if (S.mode === 'pause') { if (performance.now() - (S.lockLostT || -1e9) > 400) pause(false); } else if (S.mode === 'play' || S.mode === 'countdown') pause(true); else if (S.mode === 'finish' || S.mode === 'garage') toMenu(); }
     if (input.take('mute')) { audio.init(); audio.setMuted(!audio.muted); toast(audio.muted ? 'SOUND OFF' : 'SOUND ON', 1); }
     if (input.take('night')) { setNight(!S.night); toast(S.night ? 'NIGHT<small>Headlights on</small>' : 'DAY', 1.4); }
     if (input.take('help')) $('keys').classList.toggle('hidden');
@@ -505,11 +589,11 @@ async function boot() {
     let wheelSurf = 0;
     for (const w of phys.wheels) if (phys.fourWD || !w.front) wheelSurf = Math.max(wheelSurf, Math.abs(w.spinVel * phys.R));
     const li = S.lastInp || idle;
-    const engineRunning = S.mode !== 'menu';
+    const engineRunning = S.mode !== 'menu' && S.mode !== 'garage';
     drive.update(dt, { speed: phys.speed, wheelSurf, throttle: S.mode === 'play' ? li.throttle : 0, brake: S.mode === 'play' ? li.brake : 0, low: phys.lowRange, R: phys.R, running: engineRunning });
     let rough = 0; for (const w of phys.wheels) if (w.contact) rough += (w.rock ? 1 : 0) + Math.max(0, 1 - w.mud) * 0.3; rough /= 4;
     audio.update({ on: S.mode !== 'pause', rpm: drive.rpm, load: drive.load, throttle: S.mode === 'play' ? li.throttle : 0, whineHz: drive.whineHz, whineGain: drive.whineGain, speed: spd, mud: phys.mudAmt, spin: Math.max(1, wheelSurf), water: phys.waterAmt, ground: phys.contacts / 4, rough, view: S.camMode === 2 ? 'cabin' : S.camMode === 1 ? 'far' : 'chase' });
-    if (S.mode !== 'menu') updateHud();
+    if (S.mode !== 'menu' && S.mode !== 'garage') updateHud();
     if (toastT > 0) { toastT -= dt; if (toastT <= 0) $('toast').classList.remove('show'); }
     if (hintT > 0) { hintT -= dt; if (hintT <= 0) $('hint').classList.remove('show'); }
     fpsAcc += dt; fpsN++; if (fpsAcc > 1) { window.__perf.fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
@@ -558,7 +642,7 @@ async function boot() {
     advance(sec, o) { const inp = o ? { ...idle, ...o } : idle; const n = Math.round(sec / STEP); for (let i = 0; i < n; i++) { phys.step(STEP, inp); if (i % 4 === 3) { const d = STEP * 4; S.lastInp = inp; gameplay(d); emitEffects(d); particles.update(d, T); updateDirt(d); updateCamera(d); } } syncRealTruck(truck, phys); },
     botDrive(sec) { const b = makeBot(T, phys); b.resetTo(Math.max(0, (S.next - 1) % cpCount)); const n = Math.round(sec / STEP); for (let i = 0; i < n; i++) { const inp = b.drive(STEP); phys.step(STEP, inp); if (i % 4 === 3) { const d = STEP * 4; S.lastInp = inp; gameplay(d); emitEffects(d); particles.update(d, T); updateDirt(d); updateCamera(d); } } syncRealTruck(truck, phys); },
     tick(dt = 1 / 30, n = 1, render = false) { for (let i = 0; i < n; i++) tickOnce(dt, render); },
-    renderOnce(dt = 0.016) { const t0 = performance.now(); handleActions(); renderWorld(dt, S.lastInp || idle, false); if (S.mode !== 'menu') updateHud(); if (renderer.getContext().finish) renderer.getContext().finish(); return performance.now() - t0; },
+    renderOnce(dt = 0.016) { const t0 = performance.now(); handleActions(); renderWorld(dt, S.lastInp || idle, false); if (S.mode !== 'menu' && S.mode !== 'garage') updateHud(); if (renderer.getContext().finish) renderer.getContext().finish(); return performance.now() - t0; },
     setCam(m) { S.camMode = m; cam.init = false; },
     setDirt(v) { dirt.v = v; truck.userData.dirt.value = v; },
     info() { return { mode: S.mode, next: S.next, time: S.time, speed: phys.speed, pos: phys.pos.toArray(), up: phys.up.toArray(), fourWD: phys.fourWD, low: phys.lowRange, contacts: phys.contacts, fps: window.__perf.fps, calls: renderer.info.render.calls, tris: renderer.info.render.triangles, quality }; },
