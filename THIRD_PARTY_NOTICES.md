@@ -7,6 +7,22 @@ This project bundles or uses the following third-party work.
 - Bark and leaf textures, tree generator: [ez-tree](https://github.com/dgreenheck/ez-tree) by Daniel Greenheck — MIT.
 - Water normal map: three.js examples — MIT.
 
+## Realistic vehicle models (assets/vehicles/)
+Converted from glTF (simplified, wheels split out, textures re-encoded as WebP) by `tools/convertVehicle.mjs`. The converted files remain under each model's original licence.
+
+| Garage name | Files | Source model | Author | Licence |
+| --- | --- | --- | --- | --- |
+| Rubicon | `jeep.*` | [Jeep Wrangler Adventure Rubicon](https://sketchfab.com/3d-models/jeep-wrangler-adventure-rubicon-wwwvecarzcom-aae5b65c544d40a4b8eaf95d907e67cd) (via gkjohnson/3d-demo-data) | vecarz | CC BY-NC-SA — **non-commercial**; the converted files are shared under the same licence |
+| GT300 Racer | `supra.*` | [Toyota GR Supra GT300](https://sketchfab.com/3d-models/toyotagr-supra-gt300-wwwvecarzcom-1666c35171b649a8a927da53bdadf228) (via gkjohnson/3d-demo-data) | vecarz | CC BY |
+| MP4/5 F1 | `mclaren.*` | [McLaren MP4/5](https://sketchfab.com/3d-models/mclaren-mp45-wwwvecarzcom-b0db423a98584469a73ad9b5df2ab969) (via gkjohnson/3d-demo-data) | vecarz | CC BY |
+| Challenger ’70 | `challenger.*` | [Dodge Challenger 1970 R/T](https://blendswap.com/blend/4046) (via gkjohnson/3d-demo-data) | kryptonmedia | CC0 |
+| Cougar 6x6 | `cougar.*` | GroundVehicle, CesiumJS sample data | Cesium GS, Inc. | Apache 2.0 |
+| Mars Rover | `rover.*` | [Mars Perseverance Rover 3D model](https://science.nasa.gov/resource/mars-perseverance-rover-3d-model/) | NASA/JPL-Caltech | NASA media usage guidelines |
+| Milk Float | `milk.*` | CesiumMilkTruck, Khronos glTF Sample Assets | Cesium | CC BY 4.0 |
+| Street Concept | `concept.*` | CarConcept, Khronos glTF Sample Assets | Darmstadt Graphics Group | CC BY 4.0 |
+
+Vehicle and brand names belong to their owners; the in-game names are descriptive and imply no endorsement. Garage thumbnails (`assets/thumbs/`) are in-game renders.
+
 ## Engine sound
 The engine sound is synthesised in real time by `src/engine/engineSynth.js`, a JavaScript port (with dual-bank exhaust and
 cycle-to-cycle combustion variation added) of the generator from [enginesound](https://github.com/DasEtwas/enginesound) by DasEtwas,

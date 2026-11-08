@@ -15,6 +15,8 @@ fs.copyFileSync('src/index.html', 'docs/index.html');
 fs.mkdirSync('docs/assets/ez', { recursive: true });
 for (const f of fs.readdirSync('assets')) if (fs.statSync('assets/' + f).isFile() && !f.endsWith('.hdr')) fs.copyFileSync('assets/' + f, 'docs/assets/' + f);
 for (const f of fs.readdirSync('assets/ez')) fs.copyFileSync('assets/ez/' + f, 'docs/assets/ez/' + f);
+// realistic vehicles (converted glTF: json + bin + webp) and their garage thumbnails
+for (const d of ['vehicles', 'thumbs']) { fs.mkdirSync('docs/assets/' + d, { recursive: true }); for (const f of fs.readdirSync('assets/' + d)) fs.copyFileSync(`assets/${d}/${f}`, `docs/assets/${d}/${f}`); }
 const sz = (p) => fs.statSync(p).size;
 let total = 0; const walk = d => fs.readdirSync(d).forEach(f => { const p = d + '/' + f; fs.statSync(p).isDirectory() ? walk(p) : (total += sz(p)); });
 walk('docs');
