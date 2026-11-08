@@ -164,7 +164,9 @@ async function boot() {
   });
   const updateMenuBest = () => { $('menuBest').textContent = S.best ? `Best ${fmt(S.best)} · 13 checkpoints` : '13 checkpoints · beat the clock'; };
   updateMenuBest();
-  $('btnQuality').textContent = `Graphics: ${quality[0].toUpperCase() + quality.slice(1)}`;
+  const selQ = $('selQuality'), btnGfx = $('btnApplyGfx');
+  selQ.value = quality;
+  selQ.onchange = () => { btnGfx.disabled = selQ.value === quality; btnGfx.textContent = 'Apply'; };
 
   // ---------- modes
   let lastCountNum = null;
@@ -223,7 +225,13 @@ async function boot() {
   $('btnAgain').onclick = () => startGame('trail');
   $('btnFreeAfter').onclick = () => startGame('free');
   $('btnNight').onclick = () => setNight(!S.night);
-  $('btnQuality').onclick = () => { const q = QUALITIES[(QUALITIES.indexOf(quality) + 1) % 3]; store.set('rr2_quality', q); $('btnQuality').textContent = 'Reloading…'; setTimeout(() => location.reload(), 100); };
+  // quality is baked in at load (textures, trees, post-processing), so applying means a reload
+  btnGfx.onclick = () => {
+    if (selQ.value === quality || !QUALITIES.includes(selQ.value)) return;
+    store.set('rr2_quality', selQ.value); btnGfx.disabled = true; selQ.disabled = true; btnGfx.textContent = 'Applying…';
+    const u = new URL(location.href); u.searchParams.delete('q');   // a ?q= override would beat the saved choice
+    setTimeout(() => location.replace(u.toString()), 100);
+  };
   $('btnFull').onclick = () => { try { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}); } catch (e) { /* not allowed */ } };
   $('speedUnit').onclick = () => { S.unit = S.unit === 'kmh' ? 'mph' : 'kmh'; store.set('rr2_unit', S.unit); };
   document.querySelectorAll('.btn').forEach(b => b.addEventListener('pointerdown', () => { audio.init(); audio.click(); }));
