@@ -173,6 +173,8 @@ async function boot() {
     gatesObj.gates.forEach(g => (g.group.visible = type === 'trail'));
     $('keys').classList.remove('hidden'); clearTimeout(S.keysT); S.keysT = setTimeout(() => $('keys').classList.add('hidden'), 15000);
     if (type === 'free') toast('FREE ROAM<small>Explore the valley · Esc for menu</small>', 3);
+    lockMouse();
+    if (canLock && !store.get('rr2_mousehint', false)) { hint('Move the <b>mouse</b> to look around · scroll to zoom · Esc frees the cursor', 5); store.set('rr2_mousehint', true); }
   }
   function toMenu() {
     S.mode = 'menu';
@@ -183,13 +185,15 @@ async function boot() {
     phys.fourWD = true; phys.lowRange = false;
     input.override = null; cam.init = false;
     gatesObj.gates.forEach(g => (g.group.visible = true));
+    unlockMouse();
   }
   function pause(on) {
-    if (on && (S.mode === 'play' || S.mode === 'countdown')) { S.prevMode = S.mode; S.mode = 'pause'; showOnly('pause'); }
-    else if (!on && S.mode === 'pause') { S.mode = S.prevMode; showOnly(null); }
+    if (on && (S.mode === 'play' || S.mode === 'countdown')) { S.prevMode = S.mode; S.mode = 'pause'; showOnly('pause'); unlockMouse(); }
+    else if (!on && S.mode === 'pause') { S.mode = S.prevMode; showOnly(null); lockMouse(); }
   }
   function finish() {
     S.mode = 'finish';
+    unlockMouse();
     audio.chime(true);
     const t = S.time, prev = S.best, isBest = !prev || t < prev;
     if (isBest) { S.best = t; store.set('rr2_best', t); }
@@ -235,10 +239,29 @@ async function boot() {
 
   // ---------- camera
   const cam = { init: false, pos: new THREE.Vector3(), look: new THREE.Vector3(), yaw: 0, orbitYaw: 0, orbitPitch: 0, dragT: 0, shake: 0, fov: 55, cine: 0 };
+  // Desktop: GTA-style mouse look. The pointer is locked to the canvas while driving, so plain mouse
+  // movement orbits the camera; Esc frees the cursor (and pauses). Touch / no pointer lock: drag to orbit.
+  const playing = () => S.mode === 'play' || S.mode === 'countdown';
+  const canLock = 'requestPointerLock' in canvas && !!(window.matchMedia && matchMedia('(any-pointer: fine)').matches);
+  const isLocked = () => document.pointerLockElement === canvas;
+  function lockMouse() { if (!canLock || isLocked()) return; try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) { /* needs a user gesture */ } }
+  function unlockMouse() { if (isLocked()) document.exitPointerLock(); }
+  document.addEventListener('pointerlockchange', () => {
+    // browser released the lock (Esc, alt-tab): pause like GTA; remember when so the Esc keydown doesn't unpause again
+    if (!isLocked() && playing()) { pause(true); S.lockLostT = performance.now(); }
+  });
+  const orbit = (dx, dy, kx, ky) => { cam.orbitYaw -= dx * kx; cam.orbitPitch = clamp(cam.orbitPitch + dy * ky, -0.3, 0.9); cam.dragT = 1.6; };
   let dragging = false, lastX = 0, lastY = 0;
-  canvas.addEventListener('pointerdown', (e) => { if (S.mode === 'play' || S.mode === 'countdown') { dragging = true; lastX = e.clientX; lastY = e.clientY; } });
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!playing()) return;
+    if (canLock && !isLocked()) { lockMouse(); return; }
+    if (!isLocked()) { dragging = true; lastX = e.clientX; lastY = e.clientY; }
+  });
   addEventListener('pointerup', () => (dragging = false));
-  addEventListener('pointermove', (e) => { if (!dragging) return; cam.orbitYaw -= (e.clientX - lastX) * 0.006; cam.orbitPitch = clamp(cam.orbitPitch + (e.clientY - lastY) * 0.004, -0.25, 0.9); lastX = e.clientX; lastY = e.clientY; cam.dragT = 2.5; });
+  addEventListener('pointermove', (e) => {
+    if (isLocked()) { if (playing()) orbit(e.movementX, e.movementY, 0.0028, 0.0022); return; }
+    if (!dragging) return; orbit(e.clientX - lastX, e.clientY - lastY, 0.006, 0.004); lastX = e.clientX; lastY = e.clientY;
+  });
   let zoom = 1;
   canvas.addEventListener('wheel', (e) => { zoom = clamp(zoom * (e.deltaY > 0 ? 1.08 : 0.93), 0.6, 2.2); }, { passive: true });
   const _w = new THREE.Vector3(), _l = new THREE.Vector3();
@@ -248,7 +271,14 @@ async function boot() {
     if (!cam.init) cam.yaw = targetYaw;
     let dy = targetYaw - cam.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI;
     cam.yaw += dy * Math.min(1, dt * 2.6);
-    if (cam.dragT > 0) cam.dragT -= dt; else { cam.orbitYaw *= Math.pow(0.1, dt); cam.orbitPitch *= Math.pow(0.1, dt); }
+    if (cam.dragT > 0) cam.dragT -= dt;
+    else {
+      const rate = clamp((Math.abs(phys.speed) - 0.8) / 6, 0, 1);
+      if (rate > 0) {
+        cam.orbitYaw = Math.atan2(Math.sin(cam.orbitYaw), Math.cos(cam.orbitYaw)); // take the short way back
+        const f = Math.pow(0.12, dt * rate); cam.orbitYaw *= f; cam.orbitPitch *= f;
+      }
+    }
     let desired, look, snap = false;
     if (S.mode === 'menu') {
       cam.cine += dt * 0.09;
@@ -257,7 +287,9 @@ async function boot() {
       look = _l.set(p.x, p.y + 0.5, p.z);
     } else if (S.camMode === 2) {
       desired = _w.copy(phys.up).multiplyScalar(0.98).addScaledVector(phys.right, -0.38).addScaledVector(phys.fwd, -0.45).add(p);
-      look = _l.copy(phys.fwd).multiplyScalar(20).addScaledVector(phys.up, 0.6).add(p);
+      const hy = clamp(Math.atan2(Math.sin(cam.orbitYaw), Math.cos(cam.orbitYaw)), -2.2, 2.2);
+      _l.copy(phys.fwd).applyAxisAngle(phys.up, hy).multiplyScalar(20).addScaledVector(phys.up, 0.6 - cam.orbitPitch * 14);
+      look = _l.add(p);
       snap = true;
     } else {
       const far = S.camMode === 1;
@@ -418,7 +450,7 @@ async function boot() {
     S.lastResetT = now; tracks.clear();
   }
   function handleActions() {
-    if (input.take('pause')) { if (S.mode === 'pause') pause(false); else if (S.mode === 'play' || S.mode === 'countdown') pause(true); else if (S.mode === 'finish') toMenu(); }
+    if (input.take('pause')) { if (S.mode === 'pause') { if (performance.now() - (S.lockLostT || -1e9) > 400) pause(false); } else if (S.mode === 'play' || S.mode === 'countdown') pause(true); else if (S.mode === 'finish') toMenu(); }
     if (input.take('mute')) { audio.init(); audio.setMuted(!audio.muted); toast(audio.muted ? 'SOUND OFF' : 'SOUND ON', 1); }
     if (input.take('night')) { setNight(!S.night); toast(S.night ? 'NIGHT<small>Headlights on</small>' : 'DAY', 1.4); }
     if (input.take('help')) $('keys').classList.toggle('hidden');
