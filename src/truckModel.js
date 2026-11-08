@@ -362,7 +362,7 @@ export function buildRealTruck(color = 0x2f4fb8) {
     // caliper (does not spin)
     const cal = new THREE.Mesh(rbox(0.07, 0.12, 0.18, 0.02), m.caliper);
     cal.position.set(-Math.sign(x) * 0.0 + Math.sign(x) * 0.02, 0.12, 0.1); cal.castShadow = true; steerG.add(cal);
-    wheels.push({ steerG, spinG, x, z });
+    wheels.push({ steerG, spinG, cal, x, z });
   }
   // solid axles + springs + shocks (animated)
   const axleGeo = cyl(0.055, 0.055, 1, 12); axleGeo.rotateZ(Math.PI / 2);
@@ -378,8 +378,22 @@ export function buildRealTruck(color = 0x2f4fb8) {
   // spare wheel on the tailgate
   const spare = wheelProto.clone(); spare.rotation.y = Math.PI / 2; spare.position.set(0, 0.28, -2.48); body.add(spare);
   const springs = [];
-  root.userData = { body, wheels, axles, springs, mats: m, headPos, paint: m.paint, dirt: m.dirtUniform };
+  root.userData = { body, wheels, axles, springs, spare, mats: m, headPos, paint: m.paint, dirt: m.dirtUniform };
   return root;
+}
+
+// Apply a garage setup to the model: tyre size/width, body width. Cheap; safe to call every slider tick.
+export function applyTruckSetup(model, s) {
+  const ud = model.userData;
+  const ts = s.R / WR, tw = 1 + (ts - 1) * 0.6, sx = s.bodyScaleX;   // tyres grow a bit less in width than in radius
+  ud.body.scale.x = sx;
+  for (const vw of ud.wheels) {
+    vw.spinG.scale.set((vw.x > 0 ? 1 : -1) * tw, ts, ts);
+    vw.cal.scale.set(1, ts, ts);
+  }
+  // spare wheel sits in the (x-stretched) body: its radial z axis points along body x, so undo that stretch
+  ud.spare.scale.set(tw, ts, ts / sx);
+  ud.spare.position.y = 0.28 + (ts - 1) * 0.5;
 }
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3();
@@ -392,6 +406,7 @@ export function syncRealTruck(model, ph) {
     const w = ph.wheels[i], vw = ud.wheels[i];
     const y = ph.mountY - w.susLen;
     vw.steerG.position.y += (y - vw.steerG.position.y) * 0.7;
+    vw.steerG.position.x = w.x;
     vw.steerG.rotation.y = w.front ? ph.steer : 0;
     vw.spinG.rotation.x = w.spin;
     centres.push(vw.steerG.position);
