@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, lerp } from './noise.js';
 import { WATER, HALF } from './terrain.js';
+import { resolveSetup } from './garage.js';
 
 const G = 9.81;
 const V = () => new THREE.Vector3();
@@ -42,6 +43,25 @@ export class TruckPhysics {
     this.impacts = 0; this.landing = 0; this.treeHit = 0;
     this.inWater = 0; this.airTime = 0; this.contacts = 0;
     this.engineLoad = 0;
+    this.hullBase = this.hull.map(p => p.clone());
+    this.applySetup(resolveSetup('runner'));
+  }
+
+  // Apply a vehicle + tuning setup (see garage.js). Safe to call at any time, even mid-simulation.
+  applySetup(s) {
+    this.setup = s;
+    const ms = s.mass / 1650;
+    this.mass = s.mass;
+    this.Ib.set(3500 * ms, 3900 * ms, 1450 * ms);
+    // springs scale with mass so every vehicle sags by the same amount; travel/tyres then set the ride height
+    this.k = 15500 * ms; this.c = 1550 * ms; this.kAR = 7000 * ms;
+    this.R = s.R; this.restLen = s.restLen;
+    this.power = s.power; this.gripMul = s.grip;
+    this.rayOff = 0.6 * s.R;                                   // shape-cast spread follows the tyre radius
+    this.mudFloor = 0.3 * (1 + (s.R / 0.5 - 1) * 0.9);         // tall tyres float better in mud
+    this.rollRes = 40 * (0.75 + 0.25 * s.grip * s.grip);                       // sticky rubber rolls harder
+    for (const w of this.wheels) { w.x = Math.sign(w.x) * s.half; if (!w.contact) w.susLen = this.restLen; }
+    for (let i = 0; i < this.hull.length; i++) this.hull[i].x = this.hullBase[i].x * s.bodyScaleX;
   }
 
   reset(x, z, heading) {
@@ -117,8 +137,10 @@ export class TruckPhysics {
     this.steer += clamp(target - this.steer, -rate, rate);
 
     // engine / brake decisions
-    const top = this.lowRange ? 13 : 36;
-    const Fmax = this.lowRange ? 25000 : 11500;
+    // taller tyres = taller gearing: more top speed, less pulling force at the wheels
+    const rs = 0.5 / this.R;
+    const top = (this.lowRange ? 13 : 36) / rs;
+    const Fmax = (this.lowRange ? 25000 : 11500) * this.power * rs;
     let engine = 0, braking = 0;
     const thr = clamp(inp.throttle, 0, 1), brk = clamp(inp.brake, 0, 1);
     if (thr > 0) {
@@ -145,7 +167,7 @@ export class TruckPhysics {
       // shape-cast: 3 rays along the wheel circle
       let bestLen = Infinity; const bn = _n;
       let rockHit = false;
-      for (const off of [-0.3, 0, 0.3]) {
+      for (const off of [-this.rayOff, 0, this.rayOff]) {
         const ox = mount.x + wf.x * off, oy = mount.y + wf.y * off, oz = mount.z + wf.z * off;
         _d.set(ox, oy, oz);
         const tg = this.rayGround(_d, down, maxT);
@@ -205,7 +227,7 @@ export class TruckPhysics {
       const trail = t.trailAt(cp.x, cp.z);
       let grip = w.rock ? 1.2 : lerp(1.0, 1.08, trail);
       if (cp.y > 50) grip *= 0.75; // snow
-      grip = lerp(grip, 0.3, mud);
+      grip = lerp(grip, this.mudFloor, mud);
       grip = lerp(grip, 0.72, water);
       // tire frame
       let wf = _f.copy(fwd); if (w.front) wf.applyAxisAngle(up, this.steer);
@@ -226,9 +248,9 @@ export class TruckPhysics {
       if (hold) Fx += -clamp(vf * 25000, -5000, 5000);
       if (inp.handbrake && !w.front) { Fx += -clamp(vf * 20000, -5200, 5200); Fl *= 0.35; }
       // rolling resistance + mud/water drag: resistive, NOT limited by tire grip
-      const Fdrag = -vf * (40 + mud * 380 + water * 220);
+      const Fdrag = -vf * (this.rollRes + mud * 380 + water * 220);
       if (thr === 0 && brk === 0 && !hold) Fx += -vf * 90; // engine braking
-      const mu = 1.12 * grip;
+      const mu = 1.12 * grip * this.gripMul;
       const maxF = mu * Fs;
       const mag = Math.hypot(Fx, Fl);
       w.slip = 0;
