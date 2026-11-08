@@ -77,6 +77,42 @@
   .sw.sel { border-color: #fff; transform: scale(1.12); }
   .rowBtns { display: flex; gap: 10px; }
   .rowBtns .btn { font-size: 16px; padding: 10px 12px; justify-content: center; }
+  /* garage */
+  #garage { background: linear-gradient(90deg, rgba(5,8,6,0.9) 0%, rgba(5,8,6,0.7) 42%, rgba(5,8,6,0) 70%); justify-content: flex-start; align-items: stretch; padding: 0; cursor: grab; }
+  #garage.drag { cursor: grabbing; }
+  .gPanel { width: min(480px, 60vw); max-height: 100%; overflow-y: auto; padding: clamp(14px, 3vh, 32px) clamp(16px, 4vw, 40px) 22px clamp(18px, 6vw, 96px); cursor: default; scrollbar-width: thin; }
+  .gPanel h2 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 46px; margin: 0 0 12px; letter-spacing: 1px; text-transform: uppercase; line-height: 1; }
+  .gPanel h3 { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.6; margin: 18px 0 8px; }
+  .vehList { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .vcard { pointer-events: auto; text-align: left; padding: 10px 11px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.07); color: #fff; cursor: pointer; font-family: inherit; transition: background 0.12s, border-color 0.12s; }
+  .vcard:hover { background: rgba(255,255,255,0.14); }
+  .vcard.sel { border-color: var(--acc); background: rgba(255,176,0,0.16); }
+  .vcard b { display: block; font-family: 'Barlow Condensed', sans-serif; font-size: 19px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .vcard span { display: block; font-size: 11.5px; opacity: 0.7; line-height: 1.35; margin-top: 2px; }
+  .vcard i { display: block; font-style: normal; font-size: 11px; opacity: 0.55; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .mod { margin-bottom: 13px; }
+  .modHead { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .modHead .val { font-variant-numeric: tabular-nums; font-size: 13px; opacity: 0.9; }
+  .modHead .val em { font-style: normal; color: var(--acc); margin-left: 6px; }
+  .mod input[type=range] { pointer-events: auto; -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.2); outline: none; margin: 6px 0; cursor: pointer; }
+  .mod input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: var(--acc); border: 2px solid #1b1300; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+  .mod input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--acc); border: 2px solid #1b1300; }
+  .mod .hint { font-size: 11.5px; opacity: 0.55; line-height: 1.4; }
+  .gStats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 14px; }
+  .gStats div { border-radius: 10px; background: rgba(255,255,255,0.07); padding: 8px 10px; }
+  .gStats b { display: block; font-family: 'Barlow Condensed', sans-serif; font-size: 24px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .gStats span { font-size: 11px; opacity: 0.65; }
+  .gHelp { font-size: 12px; opacity: 0.5; margin: 2px 0 6px; }
+  .gFoot { position: sticky; bottom: -22px; margin: 0 calc(-1 * clamp(16px, 4vw, 40px)) 0 calc(-1 * clamp(18px, 6vw, 96px)); padding: 14px clamp(16px, 4vw, 40px) 22px clamp(18px, 6vw, 96px); background: linear-gradient(to top, rgba(5,8,6,0.96) 78%, rgba(5,8,6,0)); }
+  .gFoot .rowBtns .btn { margin-bottom: 0; }
+  @media (max-width: 760px) and (orientation: portrait) {
+    #garage { align-items: flex-end; background: linear-gradient(0deg, rgba(5,8,6,0.94) 0%, rgba(5,8,6,0.85) 50%, rgba(5,8,6,0) 78%); }
+    .gPanel { width: 100%; max-height: 64%; padding: 12px 16px 14px; }
+    .gFoot { margin: 0 -16px; padding: 10px 16px 14px; bottom: -14px; }
+    .gPanel h2 { font-size: 30px; margin-bottom: 4px; } .gPanel h3 { margin: 8px 0 5px; }
+    .mod .hint, .vcard span, .gHelp { display: none; } .mod { margin-bottom: 7px; }
+  }
+  @media (max-height: 700px) { .mod .hint { display: none; } .mod { margin-bottom: 8px; } .gPanel h2 { font-size: 34px; margin-bottom: 6px; } .gPanel h3 { margin: 10px 0 6px; } .vcard span { display: none; } .gStats b { font-size: 20px; } .gStats div { padding: 5px 9px; } .gFoot { padding-top: 8px; } }
   .menuFoot { font-size: 12.5px; opacity: 0.6; line-height: 1.6; margin-top: 4px; }
   .card { padding: 28px 34px; min-width: 330px; max-width: 92vw; text-align: center; border-radius: 16px; background: rgba(10,14,12,0.72); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--line); }
   .card h2 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 44px; margin: 0 0 6px; letter-spacing: 1px; }
@@ -164,11 +200,27 @@
     <div class="tag">A forest off-road trail. Rock gardens, river fords, deep mud and a mountain summit. Lock in 4WD and take it slow.</div>
     <button class="btn primary" id="btnTrail">Trail Challenge <small id="menuBest">13 checkpoints · beat the clock</small></button>
     <button class="btn" id="btnFree">Free Roam <small>explore the valley</small></button>
+    <button class="btn" id="btnGarage">Garage <small id="garageName">Ridge Runner · stock</small></button>
     <div class="swatches" id="swatches"><span class="lbl">Paint</span></div>
     <div class="rowBtns"><button class="btn" id="btnQuality">Graphics: High</button><button class="btn" id="btnFull">Fullscreen</button></div>
     <div class="menuFoot">WASD / arrows · F 4WD · L low range · R recover · C camera · N night<br>Touch steering wheel and pedals on phones · gamepad supported</div>
   </div>
   <div id="credits">Textures &amp; HDRI: Poly Haven (CC0) · Trees: ez-tree by Dan Greenheck (MIT) · Vehicle: original procedural model</div>
+</div>
+
+<div id="garage" class="overlay hidden">
+  <div class="gPanel">
+    <h2>Garage</h2>
+    <h3>Vehicle</h3>
+    <div class="vehList" id="vehList"></div>
+    <h3>Modifications</h3>
+    <div id="mods"></div>
+    <div class="gHelp">Drag the view to look around · Esc to go back</div>
+    <div class="gFoot">
+      <div class="gStats" id="gStats"></div>
+      <div class="rowBtns"><button class="btn" id="btnModReset">Reset to stock</button><button class="btn primary" id="btnGarageDone">Done</button></div>
+    </div>
+  </div>
 </div>
 
 <div id="pause" class="overlay hidden" style="background:rgba(5,8,6,0.5)">
