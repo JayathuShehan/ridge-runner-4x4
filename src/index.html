@@ -82,6 +82,10 @@
   .gfxRow .btn { width: auto; margin: 0; padding: 10px 18px; font-size: 16px; justify-content: center; }
   .gfxRow .btn:disabled { opacity: 0.35; cursor: default; transform: none; background: rgba(255,255,255,0.08); }
   .gfxRow .btn:not(:disabled) { background: var(--acc); border-color: transparent; color: #1b1300; }
+  .chk { pointer-events: auto; display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; opacity: 0.85; margin: 0 0 12px; cursor: pointer; }
+  .chk input { width: 17px; height: 17px; accent-color: var(--acc); cursor: pointer; }
+  .chk small { font-weight: 400; opacity: 0.6; font-size: 12px; }
+  #perfBox { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 30; pointer-events: none; font: 11px/1.45 ui-monospace, Consolas, monospace; background: rgba(0,0,0,0.62); color: #cfe; padding: 6px 10px; border-radius: 6px; white-space: pre; text-align: left; }
   .rowBtns { display: flex; gap: 10px; }
   .rowBtns .btn { font-size: 16px; padding: 10px 12px; justify-content: center; }
   /* garage */
@@ -201,6 +205,8 @@
   <div id="countdown"></div>
 </div>
 
+<pre id="perfBox" class="hidden"></pre>
+
 <div id="menu" class="overlay hidden">
   <div class="menuInner">
     <div class="logo">Ridge Runner<span>4x4 Trail</span></div>
@@ -212,6 +218,7 @@
     <div class="gfxRow"><label for="selQuality">Graphics</label>
       <select id="selQuality"><option value="low">Low · fastest</option><option value="medium">Medium · balanced</option><option value="high">High · best looking</option></select>
       <button class="btn" id="btnApplyGfx" disabled>Apply</button></div>
+    <label class="chk"><input type="checkbox" id="chkDyn"> Dynamic resolution <small>keeps the frame rate steady</small></label>
     <div class="rowBtns"><button class="btn" id="btnFull">Fullscreen</button></div>
     <div class="menuFoot">WASD / arrows · F 4WD · L low range · R recover · C camera · N night<br>Touch steering wheel and pedals on phones · gamepad supported</div>
   </div>

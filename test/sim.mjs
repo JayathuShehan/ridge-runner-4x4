@@ -97,6 +97,20 @@ for (const id of ['scout', 'titan']) {
   console.log(id + ' bot', JSON.stringify({ done: r.done, time: +r.time.toFixed(1), flips: r.flips, resets: r.resets }));
   check(id + ' bot completes course', r.done && r.flips === 0 && r.resets <= 2);
 }
+// 7. render interpolation: blend is between prev and current step, and pop restores the exact real state
+{
+  const Q = new TruckPhysics(T); Q.reset(cp0.x, cp0.z, Math.atan2(cp0.tx, cp0.tz));
+  for (let i = 0; i < 300; i++) Q.step(dt, inp({ throttle: 1 }));
+  const before = Q.pos.clone(), bq = Q.quat.clone(), prev = Q.prevPos.clone();
+  Q.pushInterp(0.5);
+  const mid = Q.pos.clone();
+  const okMid = mid.distanceTo(before.clone().add(prev).multiplyScalar(0.5)) < 1e-9 && Q.prevPos.distanceTo(prev) < 1e-12;
+  Q.popInterp();
+  check('interpolation blends prev/current', okMid && prev.distanceTo(before) > 1e-4, `step=${(prev.distanceTo(before) * 1000).toFixed(1)}mm`);
+  check('interpolation restores real state', Q.pos.equals(before) && Q.quat.equals(bq));
+  Q.reset(cp0.x + 5, cp0.z, 0); Q.pushInterp(0.3);
+  check('no blending across a reset', Q.pos.distanceTo(Q._sp) < 1e-12); Q.popInterp();
+}
 check('NaN guard never triggered', !P.nanReset);
 console.log(fails ? `${fails} FAILED` : 'ALL PASSED');
 process.exit(fails ? 1 : 0);

@@ -44,6 +44,9 @@ export class TruckPhysics {
     this.inWater = 0; this.airTime = 0; this.contacts = 0;
     this.engineLoad = 0;
     this.hullBase = this.hull.map(p => p.clone());
+    // previous-step state for render interpolation, plus scratch for push/popInterp
+    this.prevPos = V(); this.prevQuat = new THREE.Quaternion(); this._sp = V(); this._sq = new THREE.Quaternion();
+    this._ar = [0, 0, 0, 0]; this._offs = [0, 0, 0];
     this.applySetup(resolveSetup('runner'));
   }
 
@@ -58,6 +61,7 @@ export class TruckPhysics {
     this.R = s.R; this.restLen = s.restLen;
     this.power = s.power; this.gripMul = s.grip;
     this.rayOff = 0.6 * s.R;                                   // shape-cast spread follows the tyre radius
+    this._offs[0] = -this.rayOff; this._offs[1] = 0; this._offs[2] = this.rayOff;
     this.mudFloor = 0.3 * (1 + (s.R / 0.5 - 1) * 0.9);         // tall tyres float better in mud
     this.rollRes = 40 * (0.75 + 0.25 * s.grip * s.grip);                       // sticky rubber rolls harder
     for (const w of this.wheels) { w.x = Math.sign(w.x) * s.half; if (!w.contact) w.susLen = this.restLen; }
@@ -71,7 +75,18 @@ export class TruckPhysics {
     this.quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), heading);
     this.steer = 0;
     for (const w of this.wheels) { w.comp = w.prevComp = 0; w.spinVel = 0; }
+    this.prevPos.copy(this.pos); this.prevQuat.copy(this.quat);   // teleport: nothing to interpolate from
   }
+
+  // Render interpolation: the sim runs at a fixed 120 Hz, the display doesn't. Between two steps the visible
+  // state is blended by alpha (= leftover time / step). push swaps the blend in, pop restores the real state.
+  pushInterp(alpha) {
+    this._sp.copy(this.pos); this._sq.copy(this.quat);
+    this.pos.lerpVectors(this.prevPos, this._sp, alpha);
+    this.quat.slerpQuaternions(this.prevQuat, this._sq, alpha);
+    this.updateAxes();
+  }
+  popInterp() { this.pos.copy(this._sp); this.quat.copy(this._sq); this.updateAxes(); }
 
   get speed() { return this.vel.dot(this.fwd); }
 
@@ -122,6 +137,7 @@ export class TruckPhysics {
 
   step(dt, inp) {
     const t = this.t, m = this.mass;
+    this.prevPos.copy(this.pos); this.prevQuat.copy(this.quat);
     this.updateAxes();
     const { right, up, fwd } = this;
     const F = _a.set(0, -G * m, 0);
@@ -167,7 +183,7 @@ export class TruckPhysics {
       // shape-cast: 3 rays along the wheel circle
       let bestLen = Infinity; const bn = _n;
       let rockHit = false;
-      for (const off of [-this.rayOff, 0, this.rayOff]) {
+      for (const off of this._offs) {
         const ox = mount.x + wf.x * off, oy = mount.y + wf.y * off, oz = mount.z + wf.z * off;
         _d.set(ox, oy, oz);
         const tg = this.rayGround(_d, down, maxT);
@@ -190,7 +206,7 @@ export class TruckPhysics {
     }
 
     // springs + anti-roll
-    const ar = [0, 0, 0, 0];
+    const ar = this._ar; ar[0] = ar[1] = ar[2] = ar[3] = 0;
     for (let p = 0; p < 4; p += 2) {
       const d = this.wheels[p].comp - this.wheels[p + 1].comp;
       ar[p] = d * this.kAR; ar[p + 1] = -d * this.kAR;

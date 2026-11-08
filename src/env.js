@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 
-export function buildEnvironment(renderer, scene, hdrUrl, onReady) {
+export function buildEnvironment(renderer, scene, hdrUrl, onReady, quality = 'high') {
   const sky = new Sky();
   sky.scale.setScalar(4000);
   const u = sky.material.uniforms;
@@ -20,8 +20,11 @@ export function buildEnvironment(renderer, scene, hdrUrl, onReady) {
 
   const sun = new THREE.DirectionalLight(0xfff1dc, 3.4);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  const sc = sun.shadow.camera; sc.left = -45; sc.right = 45; sc.top = 45; sc.bottom = -45; sc.near = 1; sc.far = 400;
+  // shadow cost scales with map size: low 1024 over 70 m, medium 1536 over 90 m, high 2048 over 90 m
+  const SH = quality === 'low' ? { size: 1024, ext: 35 } : quality === 'medium' ? { size: 1536, ext: 45 } : { size: 2048, ext: 45 };
+  sun.shadow.mapSize.set(SH.size, SH.size);
+  const sc = sun.shadow.camera; sc.left = -SH.ext; sc.right = SH.ext; sc.top = SH.ext; sc.bottom = -SH.ext; sc.near = 1; sc.far = 400;
+  const texel = (2 * SH.ext) / SH.size, _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _snap = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
   sun.shadow.bias = -0.00025; sun.shadow.normalBias = 0.035;
   scene.add(sun, sun.target);
   const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x3b4a28, 0.25);
@@ -47,9 +50,12 @@ export function buildEnvironment(renderer, scene, hdrUrl, onReady) {
   return {
     sky, sun, hemi, sunDir, setSun,
     follow(target) {
-      sun.position.copy(target).addScaledVector(lightDir, 160);
-      sun.target.position.copy(target);
-      // snap shadow camera to texel grid to avoid shimmering
+      // snap the shadow camera to the shadow-map texel grid (in light space) so shadows don't crawl/shimmer as the truck moves
+      _lx.crossVectors(_up, lightDir).normalize(); _ly.crossVectors(lightDir, _lx);
+      const px = Math.round(target.dot(_lx) / texel) * texel, py = Math.round(target.dot(_ly) / texel) * texel, pz = target.dot(lightDir);
+      _snap.set(0, 0, 0).addScaledVector(_lx, px).addScaledVector(_ly, py).addScaledVector(lightDir, pz);
+      sun.position.copy(_snap).addScaledVector(lightDir, 160);
+      sun.target.position.copy(_snap);
       sun.target.updateMatrixWorld();
     },
     setNight(on) {

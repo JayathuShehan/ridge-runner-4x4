@@ -47,7 +47,10 @@ async function boot() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   const dpr = window.devicePixelRatio || 1;
-  renderer.setPixelRatio(quality === 'high' ? Math.min(dpr, 1.5) : quality === 'medium' ? Math.min(dpr, 1.25) : Math.min(dpr, 1));
+  const basePR = quality === 'high' ? Math.min(dpr, 1.5) : quality === 'medium' ? Math.min(dpr, 1.25) : Math.min(dpr, 1);
+  renderer.setPixelRatio(basePR);
+  renderer.info.autoReset = false;   // post-processing renders several passes per frame; we reset once per frame to count them all
+  renderer.shadowMap.autoUpdate = false;  // we trigger shadow updates ourselves (every frame, or every 2nd on Low)
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.15, 3500);
 
@@ -66,7 +69,7 @@ async function boot() {
       .then(b => new Promise((res, rej) => { const img = new Image(); const u = URL.createObjectURL(b); img.onload = () => { res(img); }; img.onerror = rej; img.src = u; }))
       .then(img => { t.image = img; t.needsUpdate = true; manager.itemEnd(url); })
       .catch(e => { console.warn('texture failed', url, e); missing.push(url); manager.itemError(url); manager.itemEnd(url); });
-    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(8, aniso);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(quality === 'high' ? 8 : quality === 'medium' ? 4 : 2, aniso);
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     tex[key] = t;
   };
@@ -81,7 +84,7 @@ async function boot() {
   // ---------- environment
   setLoad(36, 'Lighting the sky…'); await tick();
   const envReady = new Promise(res => { window.__envRes = res; });
-  const env = buildEnvironment(renderer, scene, 'assets/env.json', () => window.__envRes());
+  const env = buildEnvironment(renderer, scene, 'assets/env.json', () => window.__envRes(), quality);
   await envReady;
 
   // ---------- world
@@ -143,6 +146,48 @@ async function boot() {
     if (post) post.setSize(w, h);
   }
   addEventListener('resize', resize); resize();
+
+  // ---------- dynamic resolution: render scale steps down when frames run long, back up (cautiously) when there's headroom
+  const dyn = { on: store.get('rr2_dynres', true), levels: [1, 0.85, 0.72, 0.6], i: 0, ema: 16.7, slow: 0, fast: 0, warm: 3, cool: 8, lastRaise: -99, big: 0 };
+  function setScale(i) { dyn.i = i; renderer.setPixelRatio(basePR * dyn.levels[i]); resize(); window.__perf.scale = dyn.levels[i]; }
+  function dynUpdate(raw) {
+    if (!dyn.on || document.hidden) { dyn.warm = Math.max(dyn.warm, 1); dyn.big = 0; return; }
+    // a lone very long frame is a hitch (tab switch, shader compile): ignore it. Three in a row is just a slow machine.
+    if (raw > 0.25) { if (++dyn.big < 3) { dyn.warm = Math.max(dyn.warm, 1); return; } raw = 0.25; } else dyn.big = 0;
+    if ((dyn.warm -= raw) > 0) return;
+    dyn.ema += (raw * 1000 - dyn.ema) * 0.06;
+    const now = performance.now() / 1000;
+    dyn.slow = dyn.ema > 21 ? dyn.slow + raw : 0;      // sustained < ~48 fps
+    dyn.fast = dyn.ema < 17.8 ? dyn.fast + raw : 0;    // comfortably holding ~60 fps (or faster)
+    if (dyn.slow > 1.0 && dyn.i < dyn.levels.length - 1) {
+      if (now - dyn.lastRaise < 12) dyn.cool = Math.min(dyn.cool * 2, 90);   // we raised and it immediately hurt: wait longer next time
+      setScale(dyn.i + 1); dyn.slow = dyn.fast = 0; dyn.ema = 16.7; dyn.warm = 1.5;
+    } else if (dyn.fast > dyn.cool && dyn.i > 0) {
+      setScale(dyn.i - 1); dyn.lastRaise = now; dyn.slow = dyn.fast = 0; dyn.warm = 1.5;
+    }
+  }
+  window.__dyn = dyn; window.__dynUpdate = dynUpdate;
+  const chkDyn = $('chkDyn'); chkDyn.checked = dyn.on;
+  chkDyn.onchange = () => { dyn.on = chkDyn.checked; store.set('rr2_dynres', dyn.on); if (!dyn.on && dyn.i) setScale(0); };
+
+  // ---------- performance overlay (F3 or ?perf=1)
+  const perf = { on: params.get('perf') === '1', el: $('perfBox'), js: 0, phys: 0, rnd: 0, worst: 0, t: 0, frames: 0 };
+  const perfTog = () => { perf.on = !perf.on; perf.el.classList.toggle('hidden', !perf.on); };
+  perf.el.classList.toggle('hidden', !perf.on);
+  addEventListener('keydown', (e) => { if (e.code === 'F3') { e.preventDefault(); perfTog(); } });
+  function perfShow(rawDt) {
+    perf.frames++; perf.worst = Math.max(perf.worst, rawDt * 1000); perf.t += rawDt;
+    if (perf.t < 0.25) return;
+    const inf = renderer.info.render, fps = perf.frames / perf.t, sz = renderer.getDrawingBufferSize(new THREE.Vector2());
+    perf.el.textContent = `${fps.toFixed(0)} fps · ${(1000 / fps).toFixed(1)} ms (worst ${perf.worst.toFixed(0)})
+` +
+      `CPU: tick ${perf.js.toFixed(1)} · phys ${perf.phys.toFixed(2)} · render-submit ${perf.rnd.toFixed(1)} ms
+` +
+      `${inf.calls} draws · ${(inf.triangles / 1000).toFixed(0)}k tris · ${renderer.info.memory.geometries} geo · ${renderer.info.memory.textures} tex
+` +
+      `${sz.x}×${sz.y} · scale ${(dyn.levels[dyn.i] * 100).toFixed(0)}%${dyn.on ? ' (dynamic)' : ''} · ${quality}`;
+    perf.t = 0; perf.frames = 0; perf.worst = 0;
+  }
 
   // ---------- state
   const S = { mode: 'menu', type: 'trail', next: 1, time: 0, countdown: 0, lastCp: 0, camMode: 0, night: false, lights: false, resets: 0, splits: [], lastResetT: -10, upsideT: 0, hintsShown: {}, stuckT: 0, unit: store.get('rr2_unit', 'kmh'), best: store.get('rr2_best', null) };
@@ -538,7 +583,7 @@ async function boot() {
     S.resets++;
     const now = performance.now() / 1000;
     if (toCp || now - S.lastResetT < 2.5) { placeAtCp(S.type === 'trail' ? S.lastCp : 0); toast('RECOVERED<small>Back to last checkpoint</small>', 1.4); }
-    else { const yaw = Math.abs(phys.fwd.y) < 0.9 ? Math.atan2(phys.fwd.x, phys.fwd.z) : cam.yaw; phys.reset(phys.pos.x, phys.pos.z, yaw); phys.pos.y += 0.6; toast('RECOVERED<small>Recover twice quickly for last checkpoint</small>', 1.6); }
+    else { const yaw = Math.abs(phys.fwd.y) < 0.9 ? Math.atan2(phys.fwd.x, phys.fwd.z) : cam.yaw; phys.reset(phys.pos.x, phys.pos.z, yaw); phys.pos.y += 0.6; phys.prevPos.y += 0.6; toast('RECOVERED<small>Recover twice quickly for last checkpoint</small>', 1.6); }
     S.lastResetT = now; tracks.clear();
   }
   function handleActions() {
@@ -561,12 +606,16 @@ async function boot() {
   let frameErrs = 0;
   function frame() {
     requestAnimationFrame(frame);
-    const now = performance.now(); const dt = Math.min((now - lastNow) / 1000, 0.05); lastNow = now;
+    const now = performance.now(); const rawDt = (now - lastNow) / 1000, dt = Math.min(rawDt, 0.05); lastNow = now;
+    dynUpdate(rawDt);
+    if (perf.on) perfShow(rawDt);
+    const t0 = performance.now();
     try { tickOnce(dt, true); } catch (e) {
       frameErrs++; console.error(e);
       if (frameErrs === 1) showError(e, 'while running');
       if (post && frameErrs === 3) { post = null; renderer.toneMapping = THREE.AgXToneMapping; }  // fall back to plain rendering
     }
+    perf.js += (performance.now() - t0 - perf.js) * 0.1;
   }
   function tickOnce(dt, doRender) {
     simT += dt;
@@ -584,14 +633,16 @@ async function boot() {
     else input.read(dt);
     S.lastInp = inp;
     const physOn = S.mode !== 'pause';
+    const tp = performance.now();
     if (physOn) { acc += dt; let n = 0; while (acc >= STEP && n < 8) { phys.step(STEP, inp); acc -= STEP; n++; } if (n === 8) acc = 0; }
+    perf.phys += (performance.now() - tp - perf.phys) * 0.1;
     if (S.mode === 'menu') { phys.updateAxes(); if (phys.up.y < 0.3 || Math.abs(phys.speed) < 0.3) { S.menuStuck = (S.menuStuck || 0) + dt; if (S.menuStuck > 5) { S.menuStuck = 0; const ci = Math.floor(Math.random() * cpCount); placeAtCp(ci); bot.resetTo(ci); cam.init = false; } } else S.menuStuck = 0; }
     gameplay(physOn ? dt : 0);
     if (phys.landing > 0) { cam.shake = Math.max(cam.shake, phys.landing); audio.thud(phys.landing); phys.landing = 0; }
     if (phys.impacts > 0.15) { cam.shake = Math.max(cam.shake, phys.impacts * 0.8); audio.thud(phys.impacts * 0.8); }
     phys.impacts = 0;
     if (phys.treeHit > 0) { cam.shake = Math.max(cam.shake, phys.treeHit); audio.thud(phys.treeHit); phys.treeHit = 0; }
-    if (doRender) renderWorld(dt, inp, physOn); else { syncRealTruck(truck, phys); updateCamera(dt); }
+    if (doRender) renderWorld(dt, inp, physOn, physOn ? acc / STEP : 1); else { syncRealTruck(truck, phys); updateCamera(dt); }
     const spd = Math.abs(phys.speed);
     // driven-wheel surface speed (captures wheelspin in mud / air)
     let wheelSurf = 0;
@@ -606,7 +657,16 @@ async function boot() {
     if (hintT > 0) { hintT -= dt; if (hintT <= 0) $('hint').classList.remove('show'); }
     fpsAcc += dt; fpsN++; if (fpsAcc > 1) { window.__perf.fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; }
   }
-  function renderWorld(dt, inp, physOn) {
+  let shadowFrame = 0;
+  function renderWorld(dt, inp, physOn, alpha = 1) {
+    const tr = performance.now();
+    renderer.info.reset();
+    // draw the truck/camera at the blended state between the last two physics steps (smooth on any refresh rate)
+    const interp = alpha < 1; if (interp) phys.pushInterp(alpha);
+    try { renderWorldInner(dt, inp, physOn); } finally { if (interp) phys.popInterp(); }
+    perf.rnd += (performance.now() - tr - perf.rnd) * 0.1;
+  }
+  function renderWorldInner(dt, inp, physOn) {
     syncRealTruck(truck, phys);
     // brake / reverse lights
     const m = truck.userData.mats;
@@ -617,7 +677,8 @@ async function boot() {
     tracks.update(dt);
     water.update(simT);
     updateGates(simT);
-    env.follow(phys.pos);
+    // shadow map: re-render (and move the light) every frame; on Low only every 2nd frame
+    if (quality !== 'low' || (shadowFrame++ & 1) === 0) { env.follow(phys.pos); renderer.shadowMap.needsUpdate = true; }
     updateCamera(dt);
     terrain.update(camera.position, 700, quality === 'low' ? 80 : 115);
     veg.refresh(camera.position);
