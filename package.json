@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node build.mjs",
     "test:physics": "node test/sim.mjs",
-    "test:browser": "node test/func2.mjs"
+    "test:browser": "node test/func2.mjs",
+    "test:vehicles": "node test/vehicles.mjs"
   },
   "keywords": [],
   "author": "",
