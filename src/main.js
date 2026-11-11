@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { Terrain, COURSE, CP_LABELS, HALF, WATER } from './terrain.js';
 import { TruckPhysics } from './vehicle.js';
 import { buildRealTruck, syncRealTruck, applyTruckSetup } from './truckModel.js';
-import { VEHICLES, MODS, resolveSetup, modsFor, isStock, vehicleById } from './garage.js';
+import { VEHICLES, CATEGORIES, MODS, resolveSetup, modsFor, modRange, isStock, vehicleById } from './garage.js';
+import { buildModelVehicle, applyModelSetup, preloadModel, disposeVehicle } from './modelVehicle.js';
 import { buildEnvironment } from './env.js';
 import { buildTerrain } from './terrainRender.js';
 import { buildVegetation } from './vegetation.js';
@@ -113,20 +114,47 @@ async function boot() {
   setLoad(90, 'Building your truck…'); await tick();
   const phys = new TruckPhysics(T);
   let paint = store.get('rr2_paint', PAINTS[0]);
-  const truck = buildRealTruck(paint);
+  let truck = buildRealTruck(paint);
   scene.add(truck);
-  const headL = truck.userData.headPos.map(p => {
-    const sl = new THREE.SpotLight(0xfff0d8, 0, 120, 0.5, 0.45, 1.2);
-    sl.position.copy(p); sl.target.position.set(p.x * 1.5, -1.5, 18);
-    truck.add(sl, sl.target);
-    return sl;
-  });
+  // two headlight spots; they move to whichever vehicle model is current
+  const headL = [0, 1].map(() => new THREE.SpotLight(0xfff0d8, 0, 120, 0.5, 0.45, 1.2));
+  const attachHeadlights = (model) => headL.forEach(sl => model.add(sl, sl.target));
+  attachHeadlights(truck);
   // saved garage choice: { veh: id, mods: { [vehicleId]: { travel, tyre, grip, track } } }
   const garage = (() => { const g = store.get('rr2_garage', null); return { veh: vehicleById(g && g.veh).id, mods: (g && typeof g.mods === 'object' && g.mods) || {} }; })();
   function applyVehicle() {
     const sp = resolveSetup(garage.veh, garage.mods[garage.veh]);
-    phys.applySetup(sp); applyTruckSetup(truck, sp);
-    truck.userData.headPos.forEach((p, i) => { const sl = headL[i]; sl.position.set(p.x * sp.bodyScaleX, p.y, p.z); sl.target.position.set(p.x * 1.5 * sp.bodyScaleX, -1.5, 18); });
+    phys.applySetup(sp);
+    if (truck.userData.isModel) applyModelSetup(truck, sp); else applyTruckSetup(truck, sp);
+    const hp = truck.userData.headPos;
+    headL.forEach((sl, i) => { const p = hp[i] || hp[0]; sl.visible = !!p; if (p) { sl.position.set(p.x * sp.bodyScaleX, p.y, p.z); sl.target.position.set(p.x * 1.5 * sp.bodyScaleX, -1.5, p.z + 16); } });
+    return sp;
+  }
+  // Swap the visible model when the chosen vehicle needs a different one (procedural truck <-> a glTF model).
+  // Realistic models stream in on demand (a few MB each), so this is async; the newest request wins.
+  let modelReq = 0;
+  const modelKey = (m) => m.userData.isModel ? m.userData.def.model : 'procedural';
+  // a different vehicle has different wheel/body geometry: drop it fresh onto the ground instead of letting
+  // the new suspension spawn inside (or above) the terrain and launch it
+  function reseat() {
+    if (S.mode === 'garage' && garageCp >= 0) placeAtCp(garageCp);
+    else { phys.updateAxes(); phys.reset(phys.pos.x, phys.pos.z, Math.atan2(phys.fwd.x, phys.fwd.z)); }
+    cam.init = false;
+  }
+  async function ensureTruck() {
+    const v = vehicleById(garage.veh), want = v.isModel ? v.model : 'procedural';
+    const changed = phys.setup.id !== v.id;
+    if (modelKey(truck) === want) { const sp = applyVehicle(); if (changed) reseat(); return sp; }
+    const req = ++modelReq;
+    const next = v.isModel ? await buildModelVehicle(v, paint) : buildRealTruck(paint);
+    if (req !== modelReq) { disposeVehicle(next); return null; }
+    const old = truck;
+    scene.remove(old); scene.add(next); attachHeadlights(next);
+    truck = next; disposeVehicle(old);
+    truck.userData.dirt.value = dirt.v;
+    setLights(S.lights);
+    const sp = applyVehicle();
+    if (changed) reseat();
     return sp;
   }
   applyVehicle();
@@ -204,7 +232,7 @@ async function boot() {
   const sw = $('swatches');
   PAINTS.forEach(p => {
     const d = document.createElement('div'); d.className = 'sw' + (p === paint ? ' sel' : ''); d.style.background = '#' + p.toString(16).padStart(6, '0');
-    d.addEventListener('click', () => { paint = p; store.set('rr2_paint', p); truck.userData.paint.color.setHex(p); sw.querySelectorAll('.sw').forEach(e => e.classList.remove('sel')); d.classList.add('sel'); audio.init(); audio.click(); });
+    d.addEventListener('click', () => { paint = p; store.set('rr2_paint', p); if (truck.userData.paint) truck.userData.paint.color.setHex(p); sw.querySelectorAll('.sw').forEach(e => e.classList.remove('sel')); d.classList.add('sel'); audio.init(); audio.click(); });
     sw.appendChild(d);
   });
   const updateMenuBest = () => { $('menuBest').textContent = S.best ? `Best ${fmt(S.best)} · 13 checkpoints` : '13 checkpoints · beat the clock'; };
@@ -284,12 +312,35 @@ async function boot() {
   // ---------- garage (vehicle select + tuning)
   const fmtMod = (m, v) => m.key === 'tyre' ? `${v} cm · ${(v / 2.54).toFixed(1)}″` : `${v} ${m.unit}`;
   const vehList = $('vehList'), modsEl = $('mods'), statsEl = $('gStats');
-  const vehCards = VEHICLES.map(v => {
-    const b = document.createElement('button'); b.className = 'vcard';
-    b.innerHTML = `<b>${v.name}</b><span>${v.blurb}</span><i>${v.mass} kg</i>`;
-    b.onclick = () => { garage.veh = v.id; saveGarage(); applyVehicle(); refreshGarage(); audio.init(); audio.click(); };
-    vehList.appendChild(b); return b;
-  });
+  vehList.classList.add('thumbs');
+  // vehicle cards, grouped by category; realistic models get a thumbnail and load on demand
+  const vehCards = [];
+  const catTabs = $('vehCats'); let vCat = store.get('rr2_vcat', 'All');
+  if (vCat !== 'All' && !CATEGORIES.includes(vCat)) vCat = 'All';
+  for (const c of ['All', ...CATEGORIES]) {
+    const t = document.createElement('button'); t.className = 'vcat'; t.dataset.c = c;
+    t.innerHTML = `${c}<span>${c === 'All' ? VEHICLES.length : VEHICLES.filter(v => v.cat === c).length}</span>`;
+    t.onclick = () => { vCat = c; store.set('rr2_vcat', c); refreshGarage(); };
+    catTabs.appendChild(t);
+  }
+  async function pickVehicle(v, card) {
+    garage.veh = v.id; saveGarage(); refreshGarage(); audio.init(); audio.click();
+    card.classList.add('loading');
+    try { await ensureTruck(); } catch (e) {
+      console.error('vehicle load failed', e); toast(`Couldn't load ${v.name}<small>${e.message}</small>`, 3);
+      garage.veh = 'runner'; saveGarage(); await ensureTruck();
+    }
+    card.classList.remove('loading'); refreshGarage();
+  }
+  for (const v of VEHICLES) {
+    const b = document.createElement('button'); b.className = 'vcard' + (v.isModel ? ' model' : '');
+    b.title = v.blurb;
+    b.innerHTML = `<img loading="lazy" alt="" src="assets/thumbs/${v.thumb || v.model || v.id}.webp">` +
+      `<b>${v.name}</b><span>${v.blurb}</span><i>${v.mass.toLocaleString('en')} kg</i>`;
+    b.onclick = () => pickVehicle(v, b);
+    if (v.isModel) b.addEventListener('pointerenter', () => preloadModel(v.model), { once: true });
+    vehList.appendChild(b); vehCards.push(b);
+  }
   const modRows = MODS.map(m => {
     const row = document.createElement('div'); row.className = 'mod';
     row.title = m.hint;
@@ -304,9 +355,15 @@ async function boot() {
   function saveGarage() { store.set('rr2_garage', { veh: garage.veh, mods: garage.mods }); }
   function refreshGarage() {
     const v = vehicleById(garage.veh), cur = modsFor(v.id, garage.mods[v.id]), sp = resolveSetup(v.id, garage.mods[v.id]), st = sp.stats;
-    vehCards.forEach((c, i) => c.classList.toggle('sel', VEHICLES[i].id === v.id));
+    vehCards.forEach((c, i) => { c.classList.toggle('sel', VEHICLES[i].id === v.id); c.classList.toggle('hidden', vCat !== 'All' && VEHICLES[i].cat !== vCat); });
+    const selCard = vehCards[VEHICLES.indexOf(v)];
+    if (selCard && vehList.scrollWidth > vehList.clientWidth) vehList.scrollLeft = Math.max(0, selCard.offsetLeft - vehList.offsetLeft - 8);
+    catTabs.querySelectorAll('.vcat').forEach(t => t.classList.toggle('on', t.dataset.c === vCat));
+    $('vehInfo').innerHTML = `<b>${v.name}</b>${v.blurb}${v.isModel ? ' · realistic 3D model' : ''}`;
+    $('vehCredit').textContent = v.credit || 'Original procedural model';
     for (const { m, input, val } of modRows) {
-      input.min = m.min; input.max = m.max; input.value = cur[m.key];
+      const r = modRange(v.id, m);
+      input.min = r.min; input.max = r.max; input.value = cur[m.key];
       const d = cur[m.key] - v.stock[m.key];
       val.innerHTML = fmtMod(m, cur[m.key]) + (d ? `<em>${d > 0 ? '+' : ''}${d} vs stock</em>` : '<em style="opacity:.5">stock</em>');
     }
@@ -406,7 +463,7 @@ async function boot() {
       // turntable around the parked truck; look target is shifted so the truck sits right of the side panel
       if (!gDrag) cam.cine += dt * 0.14;
       const narrow = innerWidth <= 760 && innerHeight > innerWidth;   // portrait phone: panel is a bottom sheet
-      const a = cam.cine, rMax = (9.6 + (phys.R - 0.5) * 8 + (phys.setup.half - 0.98) * 6) * (narrow ? 1.3 : 1);
+      const a = cam.cine, rMax = (9.6 + (phys.R - 0.5) * 8 + (phys.setup.half - 0.98) * 6) * (phys.setup.cam || 1) * (narrow ? 1.3 : 1);
       // pull the camera in when a trunk is in the way between it and the truck
       let r = rMax; const dx = Math.sin(a), dz = Math.cos(a);
       T.treesNear(p.x, p.z, _trees);
@@ -419,18 +476,19 @@ async function boot() {
       look = _l.set(p.x - Math.cos(a) * off, p.y - 0.1 - offV, p.z + Math.sin(a) * off);
     } else if (S.mode === 'menu') {
       cam.cine += dt * 0.09;
-      const a = cam.cine, r = 7.5 + Math.sin(a * 0.6) * 1.5;
+      const a = cam.cine, r = (7.5 + Math.sin(a * 0.6) * 1.5) * (phys.setup.cam || 1);
       desired = _w.set(p.x + Math.sin(a) * r, p.y + 1.2 + Math.sin(a * 1.3) * 0.6, p.z + Math.cos(a) * r);
       look = _l.set(p.x, p.y + 0.5, p.z);
     } else if (S.camMode === 2) {
-      desired = _w.copy(phys.up).multiplyScalar(0.98).addScaledVector(phys.right, -0.38).addScaledVector(phys.fwd, -0.45).add(p);
+      const cab = phys.setup.cab || [-0.38, 0.98, -0.45];   // driver's eye point (body-local)
+      desired = _w.copy(phys.up).multiplyScalar(cab[1]).addScaledVector(phys.right, cab[0]).addScaledVector(phys.fwd, cab[2]).add(p);
       const hy = clamp(Math.atan2(Math.sin(cam.orbitYaw), Math.cos(cam.orbitYaw)), -2.2, 2.2);
       _l.copy(phys.fwd).applyAxisAngle(phys.up, hy).multiplyScalar(20).addScaledVector(phys.up, 0.6 - cam.orbitPitch * 14);
       look = _l.add(p);
       snap = true;
     } else {
       const far = S.camMode === 1;
-      const dist = (far ? 11 : 6.6) * zoom, height = (far ? 4.2 : 2.25) * zoom;
+      const cs = phys.setup.cam || 1, dist = (far ? 11 : 6.6) * zoom * cs, height = (far ? 4.2 : 2.25) * zoom * cs;
       const yaw = cam.yaw + cam.orbitYaw + Math.PI + (far ? 0 : 0.18);
       desired = _w.set(p.x + Math.sin(yaw) * dist, p.y + height + cam.orbitPitch * dist, p.z + Math.cos(yaw) * dist);
       look = _l.set(p.x, p.y + 0.9, p.z).addScaledVector(phys.fwd, 1.5);
@@ -693,6 +751,11 @@ async function boot() {
   }
 
   if (missing.length || warnings.length) console.warn('Loaded with issues', missing, warnings);
+  if (vehicleById(garage.veh).isModel) {
+    setLoad(95, `Loading the ${vehicleById(garage.veh).name}…`);
+    try { await ensureTruck(); } catch (e) { warnings.push('vehicle: ' + e.message); garage.veh = 'runner'; saveGarage(); await ensureTruck(); }
+  }
+  refreshGarage();
   setLoad(100, 'Ready!');
   toMenu();
   // warm up shaders / first frame
@@ -713,6 +776,8 @@ async function boot() {
     tick(dt = 1 / 30, n = 1, render = false) { for (let i = 0; i < n; i++) tickOnce(dt, render); },
     renderOnce(dt = 0.016) { const t0 = performance.now(); handleActions(); renderWorld(dt, S.lastInp || idle, false); if (S.mode !== 'menu' && S.mode !== 'garage') updateHud(); if (renderer.getContext().finish) renderer.getContext().finish(); return performance.now() - t0; },
     setCam(m) { S.camMode = m; cam.init = false; },
+    async setVehicle(id, mods) { garage.veh = vehicleById(id).id; if (mods) garage.mods[garage.veh] = mods; saveGarage(); await ensureTruck(); refreshGarage(); return phys.setup; },
+    vehicle() { return { id: garage.veh, model: truck.userData.isModel ? truck.userData.def.model : 'procedural', setup: phys.setup }; },
     setDirt(v) { dirt.v = v; truck.userData.dirt.value = v; },
     info() { return { mode: S.mode, next: S.next, time: S.time, speed: phys.speed, pos: phys.pos.toArray(), up: phys.up.toArray(), fourWD: phys.fourWD, low: phys.lowRange, contacts: phys.contacts, fps: window.__perf.fps, calls: renderer.info.render.calls, tris: renderer.info.render.triangles, quality }; },
   };

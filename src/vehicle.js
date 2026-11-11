@@ -43,7 +43,7 @@ export class TruckPhysics {
     this.impacts = 0; this.landing = 0; this.treeHit = 0;
     this.inWater = 0; this.airTime = 0; this.contacts = 0;
     this.engineLoad = 0;
-    this.hullBase = this.hull.map(p => p.clone());
+    this.hullStock = this.hull.map(p => p.clone()); this.hullBase = this.hullStock; this._hullFor = null;
     // previous-step state for render interpolation, plus scratch for push/popInterp
     this.prevPos = V(); this.prevQuat = new THREE.Quaternion(); this._sp = V(); this._sq = new THREE.Quaternion();
     this._ar = [0, 0, 0, 0]; this._offs = [0, 0, 0];
@@ -53,19 +53,31 @@ export class TruckPhysics {
   // Apply a vehicle + tuning setup (see garage.js). Safe to call at any time, even mid-simulation.
   applySetup(s) {
     this.setup = s;
-    const ms = s.mass / 1650;
+    const ms = s.mass / 1650, km = s.kMul || 1;
     this.mass = s.mass;
-    this.Ib.set(3500 * ms, 3900 * ms, 1450 * ms);
-    // springs scale with mass so every vehicle sags by the same amount; travel/tyres then set the ride height
-    this.k = 15500 * ms; this.c = 1550 * ms; this.kAR = 7000 * ms;
+    if (s.Ib) this.Ib.set(...s.Ib); else this.Ib.set(3500 * ms, 3900 * ms, 1450 * ms);
+    // springs scale with mass so every vehicle sags by the same amount; travel/tyres then set the ride height.
+    // Realistic models set their own static sag (kMul): a race car on stiff springs, a truck on soft ones.
+    this.k = 15500 * ms * km; this.c = 1550 * ms * Math.sqrt(km); this.kAR = 7000 * ms * (1 + (km - 1) * 0.6);
+    this.mountY = s.mountY ?? -0.1;
+    this.maxSteer = s.steer || 0.62; this.topMul = s.topMul || 1;
+    this.assist = s.assist || 0;                               // rollover assist (realistic models only; 0 = off)
     this.R = s.R; this.restLen = s.restLen;
     this.power = s.power; this.gripMul = s.grip;
     this.rayOff = 0.6 * s.R;                                   // shape-cast spread follows the tyre radius
     this._offs[0] = -this.rayOff; this._offs[1] = 0; this._offs[2] = this.rayOff;
     this.mudFloor = 0.3 * (1 + (s.R / 0.5 - 1) * 0.9);         // tall tyres float better in mud
     this.rollRes = 40 * (0.75 + 0.25 * s.grip * s.grip);                       // sticky rubber rolls harder
-    for (const w of this.wheels) { w.x = Math.sign(w.x) * s.half; if (!w.contact) w.susLen = this.restLen; }
-    for (let i = 0; i < this.hull.length; i++) this.hull[i].x = this.hullBase[i].x * s.bodyScaleX;
+    const wz = s.wheelZ || [1.45, -1.42];
+    for (const w of this.wheels) { w.x = Math.sign(w.x) * s.half; w.z = w.front ? wz[0] : wz[1]; if (!w.contact) w.susLen = this.restLen; }
+    // hull contact points: the stock truck's hand-placed set, or the model's generated box (see garage.hullPoints)
+    const hullId = s.hull ? s.id : null;
+    if (this._hullFor !== hullId) {
+      this._hullFor = hullId;
+      this.hullBase = s.hull ? s.hull.map(p => new THREE.Vector3(...p)) : this.hullStock;
+      this.hull = this.hullBase.map(p => p.clone());
+    }
+    for (let i = 0; i < this.hull.length; i++) this.hull[i].set(this.hullBase[i].x * s.bodyScaleX, this.hullBase[i].y, this.hullBase[i].z);
   }
 
   reset(x, z, heading) {
@@ -146,7 +158,7 @@ export class TruckPhysics {
     const absV = Math.abs(speed);
 
     // steering (speed sensitive)
-    const maxSteer = 0.62 / (1 + absV * 0.045);
+    const maxSteer = this.maxSteer / (1 + absV * 0.045);
     // local +x is the truck's left side, so a right turn (+steer input) is a negative yaw
     const target = -clamp(inp.steer, -1, 1) * maxSteer;
     const rate = 3.2 * dt;
@@ -155,7 +167,7 @@ export class TruckPhysics {
     // engine / brake decisions
     // taller tyres = taller gearing: more top speed, less pulling force at the wheels
     const rs = 0.5 / this.R;
-    const top = (this.lowRange ? 13 : 36) / rs;
+    const top = (this.lowRange ? 13 : 36 * this.topMul) / rs;
     const Fmax = (this.lowRange ? 25000 : 11500) * this.power * rs;
     let engine = 0, braking = 0;
     const thr = clamp(inp.throttle, 0, 1), brk = clamp(inp.brake, 0, 1);
@@ -294,6 +306,14 @@ export class TruckPhysics {
     } else {
       if (this.airTime > 0.45) this.landing = Math.max(this.landing, Math.min(1, this.airTime / 1.5));
       this.airTime = 0;
+    }
+
+    // gentle rollover assist: past ~20 degrees of roll, lean back toward upright (weaker in the air), and damp
+    // roll spin while airborne. Tall / narrow realistic models need it on the trail; the stock trucks don't use it.
+    if (this.assist > 0) {
+      const roll = right.y;
+      if (Math.abs(roll) > 0.34 && up.y > -0.2) T.addScaledVector(fwd, -Math.sign(roll) * (Math.abs(roll) - 0.34) * m * G * (contacts ? 1 : 0.5) * this.assist);
+      if (!contacts) this.angVel.addScaledVector(fwd, -this.angVel.dot(fwd) * Math.min(1, 1.2 * this.assist * dt));
     }
 
     // aero drag

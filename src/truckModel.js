@@ -58,7 +58,7 @@ function makeMaterials(color, env) {
   return m;
 }
 
-function addMud(mat, dirt, boost) {
+export function addMud(mat, dirt, boost) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uDirt = dirt;
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vMudPos;')
@@ -416,6 +416,12 @@ export function syncRealTruck(model, ph) {
     ax.g.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
     ax.g.rotation.set(0, 0, Math.atan2(b.y - a.y, b.x - a.x));
     ax.tube.scale.x = Math.hypot(b.x - a.x, b.y - a.y) - 0.3;
+  }
+  // realistic 6-wheelers: middle wheels ride between the same-side front/rear wheels (see modelVehicle.js)
+  if (ud.extra) for (const e of ud.extra) {
+    const a = ud.wheels[e.f].steerG.position, b = ud.wheels[e.r].steerG.position;
+    e.g.position.y = b.y + (a.y - b.y) * e.t + e.dy;
+    e.spinG.rotation.x = ud.wheels[e.r].spinG.rotation.x;
   }
 }
 

@@ -8,7 +8,8 @@ A realistic off-road 4x4 driving game that runs in the browser, built with three
 - Custom vehicle physics: raycast suspension with articulating solid axles, friction-circle tyres, per-surface grip, real 4WD / low-range behaviour
 - Detailed procedural off-roader, photo-textured PBR terrain, ez-tree forests with billboard LODs, GPU grass, HDR lighting, ambient occlusion, bloom
 - Physically-modelled V8 engine sound synthesised live (cylinders, valves, header/exhaust/muffler waveguides, dual exhaust), driven by a 5-speed automatic + torque-converter model: starter, idle lope, shifts, kickdown, low-range flare, wheelspin revs, overrun pops, drivetrain whine, cabin vs. chase-cam perspective
-- Garage (main menu): pick one of three vehicles (Ridge Runner, Scout, Titan) and tune suspension travel, tyre size, tyre grip and width, with a live turntable preview; settings are saved per vehicle
+- Garage (main menu): 11 vehicles in categories — the procedural trail rigs (Ridge Runner, Scout, Titan) plus eight realistic 3D models (Rubicon 4-door off-roader, Cougar 6x6 armoured truck, Challenger ’70, GT300 race car, MP4/5 F1 car, NASA's Mars Rover, Milk Float, Street Concept). Every vehicle can be tuned (suspension travel, tyre size, tyre grip, width) with a live turntable preview; settings are saved per vehicle
+- Realistic models have their own wheelbase, springs, gearing, steering, body collision box and cameras; six-wheelers (Cougar, Rover) animate the middle axle too. Models stream in on demand when picked
 - Day / night with working headlights, mud that builds up on the truck and washes off in water
 - Keyboard, gamepad, and touch (steering wheel + pedals)
 
@@ -20,6 +21,7 @@ WASD / arrows drive · Space handbrake · F 4WD · L low range · R recover (twi
 npm install
 npm run build          # bundles src/ into docs/ (served by GitHub Pages)
 npm run test:physics   # headless physics + autopilot course test
+npm run test:vehicles  # browser test: every realistic model loads, drives and can be picked/tuned in the garage (serve docs/ on :8767)
 ```
 Serve `docs/` with any static server (e.g. `python3 -m http.server -d docs`) and open it in a browser.
 
@@ -32,6 +34,9 @@ Serve `docs/` with any static server (e.g. `python3 -m http.server -d docs`) and
 ## Layout
 - `src/` — game source (physics, vehicle model, terrain, vegetation, grass, rocks, post-processing, UI)
 - `src/garage.js` — vehicle roster, modification ranges and the maths that turns a setup into physics/model parameters
+- `src/vehicles3d.js` — specs of the realistic models (pure data); `src/modelVehicle.js` loads and builds them
+- `assets/vehicles/` — converted models (json + bin + webp), `assets/thumbs/` — garage thumbnails
+- `tools/convertVehicle.mjs` — glTF → game vehicle converter (wheel detection, simplification, texture re-encode)
 - `src/engine/` — engine sound synthesis (runs in an AudioWorklet, bundled to `docs/engine-worklet.js`); `makeV8.mjs` regenerates the V8 configuration
 - `assets/` — textures (CC0) used by the build
 - `docs/` — built site published by GitHub Pages (`docs/v1/` is the original stylised version)

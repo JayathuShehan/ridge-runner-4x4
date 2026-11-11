@@ -2,7 +2,7 @@
 import { Terrain, COURSE } from '../src/terrain.js';
 import { TruckPhysics } from '../src/vehicle.js';
 import { makeBot } from '../src/bot.js';
-import { VEHICLES, MODS, resolveSetup } from '../src/garage.js';
+import { VEHICLES, MODS, resolveSetup, modRange } from '../src/garage.js';
 
 const t0 = Date.now();
 const T = new Terrain();
@@ -80,22 +80,28 @@ const trials = [];
 for (const v of VEHICLES) trials.push([v.id + ' stock', resolveSetup(v.id)]);
 trials.push(['all min', resolveSetup('runner', lo())], ['all max', resolveSetup('runner', hi())]);
 for (const m of MODS) for (const [tag, val] of [['min', m.min], ['max', m.max]]) trials.push([`runner ${m.key} ${tag}`, resolveSetup('runner', { [m.key]: val })]);
+// realistic models: every mod at both ends of that model's own range
+for (const v of VEHICLES.filter(v => v.isModel)) {
+  const ends = (k) => Object.fromEntries(MODS.map(m => [m.key, modRange(v.id, m)[k]]));
+  trials.push([`${v.id} all min`, resolveSetup(v.id, ends('min'))], [`${v.id} all max`, resolveSetup(v.id, ends('max'))]);
+}
 for (const [name, setup] of trials) {
   const Q = new TruckPhysics(T); Q.applySetup(setup);
   Q.reset(cp0.x, cp0.z, Math.atan2(cp0.tx, cp0.tz));
   let mv = 0;
   for (let i = 0; i < 720; i++) { Q.step(dt, inp()); if (i > 480) mv = Math.max(mv, Q.vel.length()); }
   const h = Q.pos.y - T.heightAt(Q.pos.x, Q.pos.z);
-  const expect = setup.stats.clearance / 100 + 0.42;      // garage readout vs simulated ride height
+  const expect = setup.stats.clearance / 100 + setup.belly;      // garage readout vs simulated ride height
   for (let i = 0; i < 480; i++) Q.step(dt, inp({ throttle: 1 }));
   const sp = Q.speed * 3.6;
   check(`garage ${name}`, mv < 0.06 && Math.abs(h - expect) < 0.08 && sp > 10 && !Q.nanReset && Q.up.y > 0.7,
     `up=${Q.up.y.toFixed(2)} rest=${mv.toFixed(3)} h=${h.toFixed(2)} (readout ${expect.toFixed(2)}) 4s=${sp.toFixed(0)}km/h clr=${setup.stats.clearance}cm crawl=${setup.stats.crawl}% stab=${setup.stats.stability}%`);
 }
-for (const id of ['scout', 'titan']) {
+for (const id of ['scout', 'titan', ...VEHICLES.filter(v => v.isModel).map(v => v.id)]) {
   const r = runBot(true, 600, false, resolveSetup(id));
   console.log(id + ' bot', JSON.stringify({ done: r.done, time: +r.time.toFixed(1), flips: r.flips, resets: r.resets }));
-  check(id + ' bot completes course', r.done && r.flips === 0 && r.resets <= 2);
+  if (VEHICLES.find(v => v.id === id).hard) check(id + ' bot (hard mode) stays upright and gets going', r.flips === 0 && (r.done || r.next >= 2));
+  else check(id + ' bot completes course', r.done && r.flips === 0 && r.resets <= 2);
 }
 // 7. render interpolation: blend is between prev and current step, and pop restores the exact real state
 {
